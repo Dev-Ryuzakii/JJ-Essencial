@@ -15,7 +15,7 @@ model Profile {
   email     String   @unique
   fullName  String   @map("full_name")
   phone     String?
-  avatar    String?  // Profile picture URL
+  avatar    String?  // Profile picture file path from upload
   dateOfBirth DateTime? @map("date_of_birth")
   role      String   @default("USER") // Using String instead of enum for compatibility
   isActive  Boolean  @default(true) @map("is_active")
@@ -70,7 +70,7 @@ model Product {
   price       Decimal  @db.Decimal(10, 2)
   stock       Int      @default(0)
   lowStockThreshold Int @default(10) @map("low_stock_threshold")
-  images      String[] // Array of image URLs
+  images      String[] // Array of uploaded image file paths
   category    String?
   categoryId  String?  @map("category_id")
   sku         String?  @unique // Stock Keeping Unit
@@ -151,7 +151,7 @@ model Trade {
   price     Decimal     @db.Decimal(10, 2)
   status    TradeStatus @default(PENDING)
   description String?
-  images    String[] // Array of image URLs
+  images    String[] // Array of uploaded image file paths
   createdAt DateTime    @default(now()) @map("created_at")
   updatedAt DateTime    @updatedAt @map("updated_at")
 
@@ -224,7 +224,7 @@ model Category {
   name        String   @unique
   description String?
   slug        String   @unique
-  image       String?  // Category image URL
+  image       String?  // Category image file path from upload
   parentId    String?  @map("parent_id") // For nested categories
   isActive    Boolean  @default(true) @map("is_active")
   sortOrder   Int      @default(0) @map("sort_order")
@@ -263,7 +263,7 @@ model ProductReview {
   rating    Int      // 1-5 stars
   title     String?
   comment   String?
-  images    String[] // Review images
+  images    String[] // Review image file paths from upload
   isVerified Boolean @default(false) @map("is_verified") // Verified purchase
   isVisible  Boolean @default(true) @map("is_visible") // Admin can hide
   createdAt DateTime @default(now()) @map("created_at")
