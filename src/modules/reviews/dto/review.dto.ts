@@ -37,6 +37,35 @@ export class CreateReviewDto {
   images?: string[];
 }
 
+export class CreateReviewWithImagesDto {
+  @ApiProperty({ example: 'product-uuid' })
+  @IsString()
+  @IsNotEmpty()
+  productId: string;
+
+  @ApiProperty({ example: 'order-uuid', required: false })
+  @IsOptional()
+  @IsUUID()
+  orderId?: string;
+
+  @ApiProperty({ example: 5, minimum: 1, maximum: 5 })
+  @IsInt()
+  @Min(1)
+  @Max(5)
+  @Type(() => Number)
+  rating: number;
+
+  @ApiProperty({ example: 'Great product!', required: false })
+  @IsOptional()
+  @IsString()
+  title?: string;
+
+  @ApiProperty({ example: 'I really love this product. Highly recommended!', required: false })
+  @IsOptional()
+  @IsString()
+  comment?: string;
+}
+
 export class UpdateReviewDto {
   @ApiProperty({ example: 5, minimum: 1, maximum: 5, required: false })
   @IsOptional()
@@ -61,6 +90,26 @@ export class UpdateReviewDto {
   @IsArray()
   @IsString({ each: true })
   images?: string[];
+}
+
+export class UpdateReviewWithImagesDto {
+  @ApiProperty({ example: 5, minimum: 1, maximum: 5, required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(5)
+  @Type(() => Number)
+  rating?: number;
+
+  @ApiProperty({ example: 'Updated title', required: false })
+  @IsOptional()
+  @IsString()
+  title?: string;
+
+  @ApiProperty({ example: 'Updated comment', required: false })
+  @IsOptional()
+  @IsString()
+  comment?: string;
 }
 
 export class ReviewResponseDto {

@@ -3,12 +3,13 @@ import { PrismaClient } from '@prisma/client';
 import { DatabaseConfig } from '../../config/database.config';
 import { CreateProductDto, UpdateProductDto, ProductFilterDto } from './dto/product.dto';
 import { PaginationDto } from '../../common/dto/common.dto';
+import { UploadService } from '../upload/upload.service';
 
 @Injectable()
 export class ProductsService {
   private prisma: PrismaClient;
 
-  constructor() {
+  constructor(private readonly uploadService: UploadService) {
     this.prisma = DatabaseConfig.getInstance();
   }
 
@@ -17,6 +18,26 @@ export class ProductsService {
       data: {
         ...createProductDto,
         price: createProductDto.price,
+      },
+    });
+
+    return this.formatProduct(product);
+  }
+
+  async createWithImages(createProductDto: CreateProductDto, images?: Express.Multer.File[]) {
+    let imageUrls: string[] = [];
+    
+    // Upload images if provided
+    if (images && images.length > 0) {
+      const uploadResults = await this.uploadService.uploadMultipleToSupabase(images, 'products');
+      imageUrls = uploadResults.map(result => result.url);
+    }
+
+    const product = await this.prisma.product.create({
+      data: {
+        ...createProductDto,
+        price: createProductDto.price,
+        images: imageUrls,
       },
     });
 
@@ -109,6 +130,35 @@ export class ProductsService {
     return this.formatProduct(product);
   }
 
+  async updateWithImages(id: string, updateProductDto: UpdateProductDto, images?: Express.Multer.File[]) {
+    const existingProduct = await this.prisma.product.findUnique({
+      where: { id },
+    });
+
+    if (!existingProduct) {
+      throw new NotFoundException('Product not found');
+    }
+
+    let imageUrls = existingProduct.images || [];
+    
+    // Upload new images if provided
+    if (images && images.length > 0) {
+      const uploadResults = await this.uploadService.uploadMultipleToSupabase(images, 'products');
+      const newImageUrls = uploadResults.map(result => result.url);
+      imageUrls = [...imageUrls, ...newImageUrls];
+    }
+
+    const product = await this.prisma.product.update({
+      where: { id },
+      data: {
+        ...updateProductDto,
+        images: imageUrls,
+      },
+    });
+
+    return this.formatProduct(product);
+  }
+
   async remove(id: string) {
     const existingProduct = await this.prisma.product.findUnique({
       where: { id },
@@ -167,15 +217,39 @@ export class ProductsService {
   }
 
   async getLowStockProducts(threshold: number = 10) {
-    const products = await this.prisma.product.findMany({
-      where: {
-        isActive: true,
-        stock: { lte: threshold },
-      },
-      orderBy: { stock: 'asc' },
-    });
+    try {
+      // Use the product's own lowStockThreshold when available, otherwise use the provided threshold
+      const products = await this.prisma.product.findMany({
+        where: {
+          isActive: true,
+          OR: [
+            // Either stock is below the product's own threshold
+            {
+              stock: { lte: this.prisma.product.fields.lowStockThreshold },
+            },
+            // Or stock is below the provided threshold
+            {
+              stock: { lte: threshold },
+            }
+          ],
+        },
+        orderBy: { stock: 'asc' },
+      });
 
-    return products.map(this.formatProduct);
+      return products.map(this.formatProduct);
+    } catch (error) {
+      console.error('Error fetching low stock products:', error);
+      // Fallback to simpler query if the first one fails
+      const products = await this.prisma.product.findMany({
+        where: {
+          isActive: true,
+          stock: { lte: threshold },
+        },
+        orderBy: { stock: 'asc' },
+      });
+      
+      return products.map(this.formatProduct);
+    }
   }
 
   private formatProduct(product: any) {

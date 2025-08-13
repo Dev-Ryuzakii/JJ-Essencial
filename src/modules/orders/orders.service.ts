@@ -296,23 +296,76 @@ export class OrdersService {
   }
 
   async getOrderStats(userId?: string) {
-    const where = userId ? { userId } : {};
+    try {
+      const where = userId ? { userId } : {};
 
-    const [total, pending, paid, completed, cancelled] = await Promise.all([
-      this.prisma.orders.count({ where }),
-      this.prisma.orders.count({ where: { ...where, status: 'PENDING' } }),
-      this.prisma.orders.count({ where: { ...where, status: 'PAID' } }),
-      this.prisma.orders.count({ where: { ...where, status: 'COMPLETED' } }),
-      this.prisma.orders.count({ where: { ...where, status: 'CANCELLED' } }),
-    ]);
+      const [total, pending, paid, completed, cancelled] = await Promise.all([
+        this.prisma.orders.count({ where }),
+        this.prisma.orders.count({ where: { ...where, status: 'PENDING' } }),
+        this.prisma.orders.count({ where: { ...where, status: 'PAID' } }),
+        this.prisma.orders.count({ where: { ...where, status: 'COMPLETED' } }),
+        this.prisma.orders.count({ where: { ...where, status: 'CANCELLED' } }),
+      ]);
 
-    return {
-      total,
-      pending,
-      paid,
-      completed,
-      cancelled,
-    };
+      // Calculate total revenue for completed and paid orders
+      const revenue = await this.prisma.orders.aggregate({
+        _sum: {
+          totalAmount: true,
+        },
+        where: {
+          ...where,
+          status: { in: ['PAID', 'COMPLETED'] },
+        },
+      });
+
+      // Get recent orders
+      const recentOrders = await this.prisma.orders.findMany({
+        where,
+        take: 5,
+        orderBy: {
+          createdAt: 'desc',
+        },
+        include: {
+          orderItems: {
+            include: {
+              product: {
+                select: {
+                  id: true,
+                  name: true,
+                  images: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      return {
+        counts: {
+          total,
+          pending,
+          paid,
+          completed,
+          cancelled,
+        },
+        totalRevenue: Number(revenue._sum.totalAmount || 0),
+        recentOrders: recentOrders.map(this.formatOrder),
+      };
+    } catch (error) {
+      console.error('Error getting order stats:', error);
+      // Return default values in case of error
+      return {
+        counts: {
+          total: 0,
+          pending: 0,
+          paid: 0,
+          completed: 0,
+          cancelled: 0,
+        },
+        totalRevenue: 0,
+        recentOrders: [],
+      };
+    }
   }
 
   private formatOrder(order: any) {

@@ -28,16 +28,28 @@ export class UploadService {
   private readonly allowedTypes: string[];
 
   constructor(private configService: ConfigService) {
-    this.supabase = createClient(
-      this.configService.get('supabase.url'),
-      this.configService.get('supabase.serviceRoleKey'),
-    );
+    const supabaseUrl = this.configService.get<string>('supabase.url');
+    const supabaseKey = this.configService.get<string>('supabase.serviceRoleKey');
+    
+    if (!supabaseUrl || !supabaseKey) {
+      this.logger.error('Missing Supabase configuration');
+      throw new Error('Supabase URL and Service Role Key are required');
+    }
+    
+    this.supabase = createClient(supabaseUrl, supabaseKey);
 
+    // Initialize file upload settings
     this.maxFileSize = this.configService.get('upload.maxFileSize') || 5242880; // 5MB default
     this.allowedTypes = this.configService.get('upload.allowedTypes')?.split(',') || [
       'image/jpeg',
+      'image/jpg', 
       'image/png',
       'image/webp',
+      'image/gif',
+      'image/svg+xml',
+      'image/bmp',
+      'image/tiff',
+      'image/avif'
     ];
 
     // Ensure upload directory exists

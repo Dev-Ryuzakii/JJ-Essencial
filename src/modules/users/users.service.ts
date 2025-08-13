@@ -1,12 +1,13 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
-import { UpdateProfileDto, ProfileResponseDto, UserAddressDto, UpdateUserAddressDto, UserAddressResponseDto } from './dto/profile.dto';
+import { UpdateProfileWithAvatarDto, ProfileResponseDto, UserAddressDto, UpdateUserAddressDto, UserAddressResponseDto } from './dto/profile.dto';
+import { UploadService } from '../upload/upload.service';
 
 @Injectable()
 export class UsersService {
   private prisma = new PrismaClient();
 
-  constructor() {}
+  constructor(private readonly uploadService: UploadService) {}
 
   async getProfile(userId: string): Promise<ProfileResponseDto> {
     const profile = await this.prisma.profile.findUnique({
@@ -36,7 +37,7 @@ export class UsersService {
     };
   }
 
-  async updateProfile(userId: string, updateProfileDto: UpdateProfileDto): Promise<ProfileResponseDto> {
+  async updateProfile(userId: string, updateProfileDto: UpdateProfileWithAvatarDto, avatar?: Express.Multer.File): Promise<ProfileResponseDto> {
     const existingProfile = await this.prisma.profile.findUnique({
       where: { id: userId },
     });
@@ -45,12 +46,20 @@ export class UsersService {
       throw new NotFoundException('Profile not found');
     }
 
+    let avatarUrl = existingProfile.avatar;
+
+    // Upload new avatar if provided
+    if (avatar) {
+      const uploadResult = await this.uploadService.uploadToSupabase(avatar, 'avatars/images');
+      avatarUrl = uploadResult.url;
+    }
+
     const updatedProfile = await this.prisma.profile.update({
       where: { id: userId },
       data: {
         fullName: updateProfileDto.fullName,
         phone: updateProfileDto.phone,
-        avatar: updateProfileDto.avatar,
+        avatar: avatarUrl,
         dateOfBirth: updateProfileDto.dateOfBirth ? new Date(updateProfileDto.dateOfBirth) : undefined,
       },
     });

@@ -10,12 +10,17 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  UseInterceptors,
+  UploadedFiles,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import { FilesInterceptor } from '@nestjs/platform-express';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { ReviewsService } from './reviews.service';
 import { 
   CreateReviewDto, 
-  UpdateReviewDto, 
+  CreateReviewWithImagesDto,
+  UpdateReviewDto,
+  UpdateReviewWithImagesDto,
   ReviewResponseDto, 
   ProductRatingStatsDto 
 } from './dto/review.dto';
@@ -43,6 +48,47 @@ export class ReviewsController {
     @Body() createReviewDto: CreateReviewDto,
   ): Promise<SuccessResponseDto<ReviewResponseDto>> {
     const review = await this.reviewsService.createReview(userId, createReviewDto);
+    return new SuccessResponseDto(review, 'Review created successfully');
+  }
+
+  @Post('with-images')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(FilesInterceptor('images', 5)) // Max 5 images
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Create a product review with image uploads' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    description: 'Review data with image files',
+    schema: {
+      type: 'object',
+      properties: {
+        productId: { type: 'string', example: 'product-uuid' },
+        orderId: { type: 'string', example: 'order-uuid' },
+        rating: { type: 'number', example: 5, minimum: 1, maximum: 5 },
+        title: { type: 'string', example: 'Great product!' },
+        comment: { type: 'string', example: 'I really love this product!' },
+        images: {
+          type: 'array',
+          items: {
+            type: 'string',
+            format: 'binary'
+          }
+        }
+      }
+    }
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Review created successfully with images',
+    type: ReviewResponseDto,
+  })
+  async createReviewWithImages(
+    @UserId() userId: string,
+    @Body() createReviewDto: CreateReviewWithImagesDto,
+    @UploadedFiles() images?: Express.Multer.File[]
+  ): Promise<SuccessResponseDto<ReviewResponseDto>> {
+    const review = await this.reviewsService.createReviewWithImages(userId, createReviewDto, images);
     return new SuccessResponseDto(review, 'Review created successfully');
   }
 

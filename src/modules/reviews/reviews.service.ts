@@ -1,11 +1,14 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
-import { CreateReviewDto, UpdateReviewDto, ReviewResponseDto, ProductRatingStatsDto } from './dto/review.dto';
+import { CreateReviewDto, CreateReviewWithImagesDto, UpdateReviewDto, UpdateReviewWithImagesDto, ReviewResponseDto, ProductRatingStatsDto } from './dto/review.dto';
 import { PaginationDto } from '../../common/dto/common.dto';
+import { UploadService } from '../upload/upload.service';
 
 @Injectable()
 export class ReviewsService {
   private prisma = new PrismaClient();
+
+  constructor(private readonly uploadService: UploadService) {}
 
   async createReview(userId: string, createReviewDto: CreateReviewDto): Promise<ReviewResponseDto> {
     const { productId, orderId, rating, title, comment, images } = createReviewDto;
@@ -64,6 +67,89 @@ export class ReviewsService {
         title,
         comment,
         images: images || [],
+        isVerified,
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            avatar: true,
+          },
+        },
+      },
+    });
+
+    // Update product rating
+    await this.updateProductRating(productId);
+
+    return this.mapToResponseDto(review);
+  }
+
+  async createReviewWithImages(userId: string, createReviewDto: CreateReviewWithImagesDto, images?: Express.Multer.File[]): Promise<ReviewResponseDto> {
+    const { productId, orderId, rating, title, comment } = createReviewDto;
+
+    // Check if product exists
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId, isActive: true },
+    });
+
+    if (!product) {
+      throw new NotFoundException('Product not found');
+    }
+
+    // Check if user has already reviewed this product
+    const existingReview = await this.prisma.productReview.findUnique({
+      where: {
+        userId_productId_orderId: {
+          userId,
+          productId,
+          orderId: orderId || null,
+        },
+      },
+    });
+
+    if (existingReview) {
+      throw new BadRequestException('You have already reviewed this product');
+    }
+
+    // Upload images if provided
+    let imageUrls: string[] = [];
+    if (images && images.length > 0) {
+      const uploadResults = await this.uploadService.uploadMultipleToSupabase(images, 'reviews');
+      imageUrls = uploadResults.map(result => result.url);
+    }
+
+    // If orderId is provided, verify the user bought this product
+    let isVerified = false;
+    if (orderId) {
+      const order = await this.prisma.orders.findFirst({
+        where: {
+          id: orderId,
+          userId,
+          status: { in: ['PAID', 'COMPLETED'] },
+          orderItems: {
+            some: { productId },
+          },
+        },
+      });
+
+      if (order) {
+        isVerified = true;
+      } else {
+        throw new BadRequestException('You can only review products you have purchased');
+      }
+    }
+
+    const review = await this.prisma.productReview.create({
+      data: {
+        userId,
+        productId,
+        orderId,
+        rating,
+        title,
+        comment,
+        images: imageUrls,
         isVerified,
       },
       include: {

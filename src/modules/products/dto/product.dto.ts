@@ -25,15 +25,30 @@ export class CreateProductDto {
   @Type(() => Number)
   stock: number;
 
-  @ApiProperty({ example: ['url1.jpg', 'url2.jpg'], type: [String] })
-  @IsArray()
-  @IsString({ each: true })
-  images: string[];
-
   @ApiProperty({ example: 'Electronics', required: false })
   @IsString()
   @IsOptional()
   category?: string;
+
+  @ApiProperty({ example: 10, required: false })
+  @IsNumber()
+  @Min(0)
+  @Type(() => Number)
+  @IsOptional()
+  lowStockThreshold?: number;
+}
+
+export class CreateProductWithImagesDto extends CreateProductDto {
+  @ApiProperty({ 
+    type: 'array',
+    items: {
+      type: 'string',
+      format: 'binary'
+    },
+    description: 'Product images (JPEG, PNG, WebP supported)',
+    required: false
+  })
+  images?: Express.Multer.File[];
 }
 
 export class UpdateProductDto {
@@ -61,12 +76,6 @@ export class UpdateProductDto {
   @IsOptional()
   stock?: number;
 
-  @ApiProperty({ example: ['url1.jpg', 'url2.jpg'], type: [String], required: false })
-  @IsArray()
-  @IsString({ each: true })
-  @IsOptional()
-  images?: string[];
-
   @ApiProperty({ example: 'Electronics', required: false })
   @IsString()
   @IsOptional()
@@ -76,6 +85,26 @@ export class UpdateProductDto {
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
+
+  @ApiProperty({ example: 10, required: false })
+  @IsNumber()
+  @Min(0)
+  @Type(() => Number)
+  @IsOptional()
+  lowStockThreshold?: number;
+}
+
+export class UpdateProductWithImagesDto extends UpdateProductDto {
+  @ApiProperty({ 
+    type: 'array',
+    items: {
+      type: 'string',
+      format: 'binary'
+    },
+    description: 'New product images (JPEG, PNG, WebP supported). Will replace existing images.',
+    required: false
+  })
+  images?: Express.Multer.File[];
 }
 
 export class ProductResponseDto {

@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsEmail, IsPhoneNumber, IsDateString, IsUrl } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsEmail, IsPhoneNumber, IsDateString } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class UpdateProfileDto {
@@ -13,16 +13,13 @@ export class UpdateProfileDto {
   @IsString()
   phone?: string;
 
-  @ApiProperty({ example: 'https://example.com/avatar.jpg', required: false })
-  @IsOptional()
-  @IsUrl()
-  avatar?: string;
-
   @ApiProperty({ example: '1990-01-01', required: false })
   @IsOptional()
   @IsDateString()
   dateOfBirth?: string;
 }
+
+export class UpdateProfileWithAvatarDto extends UpdateProfileDto {}
 
 export class ProfileResponseDto {
   @ApiProperty()

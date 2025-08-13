@@ -7,8 +7,9 @@ import {
   UseGuards,
   HttpStatus,
   HttpCode,
+  Query,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import {
   SignUpDto,
@@ -16,10 +17,12 @@ import {
   AuthResponseDto,
   ResetPasswordDto,
   UpdatePasswordDto,
+  AdminSignInDto,
 } from './dto/auth.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser, UserId } from '../../common/decorators/user.decorator';
 import { SuccessResponseDto } from '../../common/dto/common.dto';
+import { Roles, AdminOnly } from '../../common/decorators/roles.decorator';
 
 @ApiTags('Authentication')
 @Controller('auth')
@@ -39,6 +42,20 @@ export class AuthController {
   async signUp(@Body() signUpDto: SignUpDto): Promise<SuccessResponseDto<AuthResponseDto>> {
     const result = await this.authService.signUp(signUpDto);
     return new SuccessResponseDto(result, 'User registered successfully');
+  }
+
+  @Post('admin/signin')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Sign in as admin' })
+  @ApiResponse({
+    status: 200,
+    description: 'Admin successfully signed in',
+    type: AuthResponseDto,
+  })
+  @ApiResponse({ status: 401, description: 'Invalid admin credentials' })
+  async adminSignIn(@Body() adminSignInDto: AdminSignInDto): Promise<SuccessResponseDto<AuthResponseDto>> {
+    const result = await this.authService.adminSignIn(adminSignInDto);
+    return new SuccessResponseDto(result, 'Admin signed in successfully');
   }
 
   @Post('signin')
@@ -96,5 +113,19 @@ export class AuthController {
   @ApiResponse({ status: 200, description: 'User info retrieved' })
   async getCurrentUser(@CurrentUser() user: any) {
     return new SuccessResponseDto(user, 'User info retrieved');
+  }
+  
+  @Get('admin/sync-users')
+  @UseGuards(JwtAuthGuard)
+  @AdminOnly()
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Sync users between Supabase Auth and local database' })
+  @ApiResponse({ status: 200, description: 'User sync status retrieved' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Admin only' })
+  @ApiQuery({ name: 'fix', required: false, type: Boolean, description: 'Fix inconsistencies between Supabase Auth and local database' })
+  async syncUsers(@Query('fix') fix: boolean = false) {
+    const result = await this.authService.syncUsers(fix);
+    return new SuccessResponseDto(result, 'User synchronization completed');
   }
 }

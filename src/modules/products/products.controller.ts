@@ -10,10 +10,15 @@ import {
   UseGuards,
   HttpStatus,
   HttpCode,
+  UseInterceptors,
+  UploadedFiles,
+  BadRequestException,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import { FilesInterceptor } from '@nestjs/platform-express';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { ProductsService } from './products.service';
-import { CreateProductDto, UpdateProductDto, ProductResponseDto, ProductFilterDto } from './dto/product.dto';
+import { UploadService } from '../upload/upload.service';
+import { CreateProductDto, UpdateProductDto, ProductResponseDto, ProductFilterDto, CreateProductWithImagesDto, UpdateProductWithImagesDto } from './dto/product.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { AdminOnly } from '../../common/decorators/roles.decorator';
@@ -22,14 +27,41 @@ import { SuccessResponseDto, PaginationDto, PaginatedResponseDto } from '../../c
 @ApiTags('Products')
 @Controller('products')
 export class ProductsController {
-  constructor(private readonly productsService: ProductsService) {}
+  constructor(
+    private readonly productsService: ProductsService,
+    private readonly uploadService: UploadService
+  ) {}
 
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @AdminOnly()
+  @UseInterceptors(FilesInterceptor('images', 10)) // Max 10 images
   @ApiBearerAuth()
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Create a new product (Admin only)' })
+  @ApiOperation({ summary: 'Create a new product with file uploads (Admin only)' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    description: 'Product data with images',
+    schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', example: 'iPhone 15 Pro' },
+        description: { type: 'string', example: 'Latest iPhone with advanced features' },
+        price: { type: 'number', example: 999.99 },
+        stock: { type: 'number', example: 50 },
+        category: { type: 'string', example: 'Electronics' },
+        lowStockThreshold: { type: 'number', example: 10 },
+        images: {
+          type: 'array',
+          items: {
+            type: 'string',
+            format: 'binary'
+          }
+        }
+      },
+      required: ['name', 'price', 'stock']
+    }
+  })
   @ApiResponse({
     status: 201,
     description: 'Product successfully created',
@@ -37,8 +69,11 @@ export class ProductsController {
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden - Admin only' })
-  async create(@Body() createProductDto: CreateProductDto): Promise<SuccessResponseDto<ProductResponseDto>> {
-    const result = await this.productsService.create(createProductDto);
+  async create(
+    @Body() createProductDto: CreateProductDto,
+    @UploadedFiles() images?: Express.Multer.File[]
+  ): Promise<SuccessResponseDto<ProductResponseDto>> {
+    const result = await this.productsService.createWithImages(createProductDto, images);
     return new SuccessResponseDto(result, 'Product created successfully');
   }
 
@@ -106,8 +141,32 @@ export class ProductsController {
   @Patch(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @AdminOnly()
+  @UseInterceptors(FilesInterceptor('images', 10)) // Max 10 images
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Update a product (Admin only)' })
+  @ApiOperation({ summary: 'Update a product with file uploads (Admin only)' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    description: 'Product update data with optional images',
+    schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', example: 'Updated iPhone 15 Pro' },
+        description: { type: 'string', example: 'Updated description' },
+        price: { type: 'number', example: 899.99 },
+        stock: { type: 'number', example: 25 },
+        category: { type: 'string', example: 'Electronics' },
+        lowStockThreshold: { type: 'number', example: 10 },
+        isActive: { type: 'boolean', example: true },
+        images: {
+          type: 'array',
+          items: {
+            type: 'string',
+            format: 'binary'
+          }
+        }
+      }
+    }
+  })
   @ApiResponse({
     status: 200,
     description: 'Product updated successfully',
@@ -119,8 +178,9 @@ export class ProductsController {
   async update(
     @Param('id') id: string,
     @Body() updateProductDto: UpdateProductDto,
+    @UploadedFiles() images?: Express.Multer.File[]
   ): Promise<SuccessResponseDto<ProductResponseDto>> {
-    const result = await this.productsService.update(id, updateProductDto);
+    const result = await this.productsService.updateWithImages(id, updateProductDto, images);
     return new SuccessResponseDto(result, 'Product updated successfully');
   }
 

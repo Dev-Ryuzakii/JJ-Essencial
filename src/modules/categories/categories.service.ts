@@ -1,13 +1,16 @@
 import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
-import { CreateCategoryDto, UpdateCategoryDto, CategoryResponseDto } from './dto/category.dto';
+import { CreateCategoryDto, CreateCategoryWithImageDto, UpdateCategoryDto, UpdateCategoryWithImageDto, CategoryResponseDto } from './dto/category.dto';
+import { UploadService } from '../upload/upload.service';
 
 @Injectable()
 export class CategoriesService {
   private prisma = new PrismaClient();
 
+  constructor(private readonly uploadService: UploadService) {}
+
   async createCategory(createCategoryDto: CreateCategoryDto): Promise<CategoryResponseDto> {
-    const { name, description, image, parentId, sortOrder } = createCategoryDto;
+    const { name, description, parentId, sortOrder } = createCategoryDto;
 
     // Generate slug from name
     const slug = this.generateSlug(name);
@@ -37,7 +40,67 @@ export class CategoriesService {
         name,
         description,
         slug,
-        image,
+        parentId,
+        sortOrder: sortOrder || 0,
+      },
+      include: {
+        parent: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
+        children: true,
+        _count: {
+          select: {
+            products: true,
+          },
+        },
+      },
+    });
+
+    return this.mapToResponseDto(category);
+  }
+
+  async createCategoryWithImage(createCategoryDto: CreateCategoryWithImageDto, image?: Express.Multer.File): Promise<CategoryResponseDto> {
+    const { name, description, parentId, sortOrder } = createCategoryDto;
+
+    // Generate slug from name
+    const slug = this.generateSlug(name);
+
+    // Check if slug already exists
+    const existingCategory = await this.prisma.category.findUnique({
+      where: { slug },
+    });
+
+    if (existingCategory) {
+      throw new ConflictException('Category with this name already exists');
+    }
+
+    // Validate parent category if provided
+    if (parentId) {
+      const parent = await this.prisma.category.findUnique({
+        where: { id: parentId, isActive: true },
+      });
+
+      if (!parent) {
+        throw new NotFoundException('Parent category not found');
+      }
+    }
+
+    let imageUrl: string | null = null;
+    if (image) {
+      const uploadResult = await this.uploadService.uploadToSupabase(image, 'categories/images');
+      imageUrl = uploadResult.url;
+    }
+
+    const category = await this.prisma.category.create({
+      data: {
+        name,
+        description,
+        slug,
+        image: imageUrl,
         parentId,
         sortOrder: sortOrder || 0,
       },
@@ -204,7 +267,7 @@ export class CategoriesService {
       throw new NotFoundException('Category not found');
     }
 
-    const { name, description, image, parentId, sortOrder, isActive } = updateCategoryDto;
+    const { name, description, parentId, sortOrder, isActive } = updateCategoryDto;
 
     let slug = existingCategory.slug;
     
@@ -252,7 +315,99 @@ export class CategoriesService {
         name,
         description,
         slug,
-        image,
+        parentId,
+        sortOrder,
+        isActive,
+      },
+      include: {
+        parent: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
+        children: {
+          where: { isActive: true },
+          orderBy: { sortOrder: 'asc' },
+        },
+        _count: {
+          select: {
+            products: {
+              where: { isActive: true },
+            },
+          },
+        },
+      },
+    });
+
+    return this.mapToResponseDto(updatedCategory);
+  }
+
+  async updateCategoryWithImage(id: string, updateCategoryDto: UpdateCategoryWithImageDto, image?: Express.Multer.File): Promise<CategoryResponseDto> {
+    const existingCategory = await this.prisma.category.findUnique({
+      where: { id },
+    });
+
+    if (!existingCategory) {
+      throw new NotFoundException('Category not found');
+    }
+
+    const { name, description, parentId, sortOrder, isActive } = updateCategoryDto;
+
+    let slug = existingCategory.slug;
+    
+    // Generate new slug if name is being updated
+    if (name && name !== existingCategory.name) {
+      slug = this.generateSlug(name);
+      
+      // Check if new slug already exists
+      const existingSlug = await this.prisma.category.findUnique({
+        where: { 
+          slug,
+          NOT: { id },
+        },
+      });
+
+      if (existingSlug) {
+        throw new ConflictException('Category with this name already exists');
+      }
+    }
+
+    // Validate parent category if provided
+    if (parentId && parentId !== existingCategory.parentId) {
+      if (parentId === id) {
+        throw new BadRequestException('Category cannot be its own parent');
+      }
+
+      const parent = await this.prisma.category.findUnique({
+        where: { id: parentId, isActive: true },
+      });
+
+      if (!parent) {
+        throw new NotFoundException('Parent category not found');
+      }
+
+      // Check for circular dependency
+      const wouldCreateCycle = await this.wouldCreateCircularDependency(id, parentId);
+      if (wouldCreateCycle) {
+        throw new BadRequestException('This would create a circular dependency');
+      }
+    }
+
+    let imageUrl = existingCategory.image;
+    if (image) {
+      const uploadResult = await this.uploadService.uploadToSupabase(image, 'categories/images');
+      imageUrl = uploadResult.url;
+    }
+
+    const updatedCategory = await this.prisma.category.update({
+      where: { id },
+      data: {
+        name,
+        description,
+        slug,
+        image: imageUrl,
         parentId,
         sortOrder,
         isActive,

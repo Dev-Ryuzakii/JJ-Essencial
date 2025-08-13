@@ -22,7 +22,7 @@ pids
 *.pid
 *.seed
 *.pid.lock
-
+.github
 # Coverage directory used by tools like istanbul
 coverage/
 *.lcov

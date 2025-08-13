@@ -10,11 +10,14 @@ import {
   UseGuards,
   HttpStatus,
   HttpCode,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import {
-  UpdateProfileDto,
+  UpdateProfileWithAvatarDto,
   ProfileResponseDto,
   UserAddressDto,
   UpdateUserAddressDto,
@@ -45,8 +48,25 @@ export class UsersController {
 
   @Put('profile')
   @UseGuards(JwtAuthGuard)
+  @UseInterceptors(FileInterceptor('avatar'))
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Update user profile' })
+  @ApiOperation({ summary: 'Update user profile with optional avatar file upload' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    description: 'Profile data with optional avatar file',
+    schema: {
+      type: 'object',
+      properties: {
+        fullName: { type: 'string', example: 'John Doe' },
+        phone: { type: 'string', example: '+1234567890' },
+        dateOfBirth: { type: 'string', example: '1990-01-01' },
+        avatar: {
+          type: 'string',
+          format: 'binary'
+        }
+      }
+    }
+  })
   @ApiResponse({
     status: 200,
     description: 'Profile updated successfully',
@@ -54,11 +74,15 @@ export class UsersController {
   })
   async updateProfile(
     @UserId() userId: string,
-    @Body() updateProfileDto: UpdateProfileDto,
+    @Body() updateProfileDto: UpdateProfileWithAvatarDto,
+    @UploadedFile() avatar?: Express.Multer.File,
   ): Promise<SuccessResponseDto<ProfileResponseDto>> {
-    const profile = await this.usersService.updateProfile(userId, updateProfileDto);
+    const profile = await this.usersService.updateProfile(userId, updateProfileDto, avatar);
     return new SuccessResponseDto(profile, 'Profile updated successfully');
   }
+
+    @Get('addresses')
+  @UseGuards(JwtAuthGuard)
 
   @Get('profile/stats')
   @UseGuards(JwtAuthGuard)

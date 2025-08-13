@@ -10,10 +10,19 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { CategoriesService } from './categories.service';
-import { CreateCategoryDto, UpdateCategoryDto, CategoryResponseDto } from './dto/category.dto';
+import { 
+  CreateCategoryDto, 
+  CreateCategoryWithImageDto,
+  UpdateCategoryDto, 
+  UpdateCategoryWithImageDto,
+  CategoryResponseDto 
+} from './dto/category.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { AdminOnly } from '../../common/decorators/roles.decorator';
@@ -87,6 +96,43 @@ export class CategoriesController {
     return new SuccessResponseDto(category, 'Category created successfully');
   }
 
+  @Post('with-image')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @AdminOnly()
+  @UseInterceptors(FileInterceptor('image'))
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Create new category with image file upload (Admin only)' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    description: 'Category data with image file',
+    schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', example: 'Electronics' },
+        description: { type: 'string', example: 'Electronic devices and accessories' },
+        parentId: { type: 'string', example: 'parent-category-uuid' },
+        sortOrder: { type: 'number', example: 1 },
+        image: {
+          type: 'string',
+          format: 'binary'
+        }
+      }
+    }
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Category created successfully with image',
+    type: CategoryResponseDto,
+  })
+  async createCategoryWithImage(
+    @Body() createCategoryDto: CreateCategoryWithImageDto,
+    @UploadedFile() image?: Express.Multer.File,
+  ): Promise<SuccessResponseDto<CategoryResponseDto>> {
+    const category = await this.categoriesService.createCategoryWithImage(createCategoryDto, image);
+    return new SuccessResponseDto(category, 'Category created successfully');
+  }
+
   @Put(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @AdminOnly()
@@ -102,6 +148,44 @@ export class CategoriesController {
     @Body() updateCategoryDto: UpdateCategoryDto,
   ): Promise<SuccessResponseDto<CategoryResponseDto>> {
     const category = await this.categoriesService.updateCategory(id, updateCategoryDto);
+    return new SuccessResponseDto(category, 'Category updated successfully');
+  }
+
+  @Put(':id/with-image')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @AdminOnly()
+  @UseInterceptors(FileInterceptor('image'))
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update category with image file upload (Admin only)' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    description: 'Category data with image file',
+    schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', example: 'Electronics' },
+        description: { type: 'string', example: 'Electronic devices and accessories' },
+        parentId: { type: 'string', example: 'parent-category-uuid' },
+        sortOrder: { type: 'number', example: 1 },
+        isActive: { type: 'boolean', example: true },
+        image: {
+          type: 'string',
+          format: 'binary'
+        }
+      }
+    }
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Category updated successfully with image',
+    type: CategoryResponseDto,
+  })
+  async updateCategoryWithImage(
+    @Param('id') id: string,
+    @Body() updateCategoryDto: UpdateCategoryWithImageDto,
+    @UploadedFile() image?: Express.Multer.File,
+  ): Promise<SuccessResponseDto<CategoryResponseDto>> {
+    const category = await this.categoriesService.updateCategoryWithImage(id, updateCategoryDto, image);
     return new SuccessResponseDto(category, 'Category updated successfully');
   }
 

@@ -31,6 +31,18 @@ export class SignInDto {
   password: string;
 }
 
+export class AdminSignInDto {
+  @ApiProperty({ example: 'admin@jjessential.com' })
+  @IsEmail()
+  @IsNotEmpty()
+  email: string;
+
+  @ApiProperty({ example: 'admin123' })
+  @IsString()
+  @IsNotEmpty()
+  password: string;
+}
+
 export class AuthResponseDto {
   @ApiProperty()
   access_token: string;

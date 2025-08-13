@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsInt, IsUrl, Min } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsInt, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class CreateCategoryDto {
@@ -13,10 +13,29 @@ export class CreateCategoryDto {
   @IsString()
   description?: string;
 
-  @ApiProperty({ example: 'https://example.com/category.jpg', required: false })
+  @ApiProperty({ example: 'parent-category-uuid', required: false })
   @IsOptional()
-  @IsUrl()
-  image?: string;
+  @IsString()
+  parentId?: string;
+
+  @ApiProperty({ example: 1, required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Type(() => Number)
+  sortOrder?: number;
+}
+
+export class CreateCategoryWithImageDto {
+  @ApiProperty({ example: 'Electronics' })
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @ApiProperty({ example: 'Electronic devices and accessories', required: false })
+  @IsOptional()
+  @IsString()
+  description?: string;
 
   @ApiProperty({ example: 'parent-category-uuid', required: false })
   @IsOptional()
@@ -32,6 +51,12 @@ export class CreateCategoryDto {
 }
 
 export class UpdateCategoryDto extends CreateCategoryDto {
+  @ApiProperty({ example: true, required: false })
+  @IsOptional()
+  isActive?: boolean;
+}
+
+export class UpdateCategoryWithImageDto extends CreateCategoryWithImageDto {
   @ApiProperty({ example: true, required: false })
   @IsOptional()
   isActive?: boolean;
