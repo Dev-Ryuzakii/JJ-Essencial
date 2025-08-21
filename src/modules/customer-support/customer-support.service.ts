@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseConfig } from '../../config/supabase.config';
 
 type ChatStatus = 'OPEN' | 'IN_PROGRESS' | 'CLOSED';
 type ChatPriority = 'LOW' | 'MEDIUM' | 'HIGH';
@@ -22,55 +23,61 @@ export interface UpdateChatStatusDto {
 
 @Injectable()
 export class CustomerSupportService {
-  private prisma = new PrismaClient();
+  private supabase: SupabaseClient;
+
+  constructor() {
+    this.supabase = SupabaseConfig.getInstance();
+  }
 
   async createSupportChat(userId: string, dto: CreateSupportChatDto) {
-    return this.prisma.supportChat.create({
-      data: {
+    // First create the chat
+    const { data: chat, error: chatError } = await this.supabase
+      .from('supportChat')
+      .insert([{
         userId,
         subject: dto.subject,
         priority: dto.priority || 'MEDIUM',
         status: 'OPEN',
-        messages: {
-          create: {
-            senderId: userId,
-            message: dto.initialMessage,
-            isAdmin: false,
-          },
-        },
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            email: true,
-            fullName: true,
-          },
-        },
-        messages: {
-          orderBy: { createdAt: 'asc' },
-          include: {
-            sender: {
-              select: {
-                id: true,
-                email: true,
-                fullName: true,
-              },
-            },
-          },
-        },
-      },
-    });
+      }])
+      .select('*, user:users(id, email, fullName)')
+      .single();
+
+    if (chatError || !chat) {
+      throw new Error('Failed to create support chat');
+    }
+
+    // Then create the initial message
+    const { data: message, error: messageError } = await this.supabase
+      .from('chatMessage')
+      .insert([{
+        chatId: chat.id,
+        senderId: userId,
+        message: dto.initialMessage,
+        isAdmin: false,
+      }])
+      .select('*, sender:users(id, email, fullName)')
+      .single();
+
+    if (messageError) {
+      // Should probably delete the chat in this case
+      throw new Error('Failed to create initial message');
+    }
+
+    return {
+      ...chat,
+      messages: [message],
+    };
   }
 
   async addMessageToChat(userId: string, dto: CreateChatMessageDto) {
     // Verify chat exists and user has access
-    const chat = await this.prisma.supportChat.findUnique({
-      where: { id: dto.chatId },
-      include: { user: true },
-    });
+    const { data: chat, error: chatError } = await this.supabase
+      .from('supportChat')
+      .select('*, user:users!inner(*)')
+      .eq('id', dto.chatId)
+      .single();
 
-    if (!chat) {
+    if (!chat || chatError) {
       throw new NotFoundException('Chat not found');
     }
 
@@ -79,79 +86,68 @@ export class CustomerSupportService {
       throw new ForbiddenException('Access denied to this chat');
     }
 
-    const message = await this.prisma.chatMessage.create({
-      data: {
+    const { data: message, error: messageError } = await this.supabase
+      .from('chatMessage')
+      .insert([{
         chatId: dto.chatId,
         senderId: userId,
         message: dto.message,
         isAdmin: dto.isFromSupport || false,
-      },
-      include: {
-        sender: {
-          select: {
-            id: true,
-            email: true,
-            fullName: true,
-          },
-        },
-      },
-    });
+      }])
+      .select('*, sender:users(id, email, fullName)')
+      .single();
+
+    if (messageError || !message) {
+      throw new Error('Failed to create message');
+    }
 
     return message;
   }
 
   async getUserChats(userId: string) {
-    return this.prisma.supportChat.findMany({
-      where: { userId },
-      include: {
-        messages: {
-          orderBy: { createdAt: 'desc' },
-          take: 1, // Only get the latest message for preview
-          include: {
-            sender: {
-              select: {
-                id: true,
-                email: true,
-                fullName: true,
-              },
-            },
-          },
-        },
-        _count: {
-          select: { messages: true },
-        },
+    const { data: chats, error } = await this.supabase
+      .from('supportChat')
+      .select(`
+        *,
+        messages:chatMessage(
+          *,
+          sender:users(id, email, fullName)
+        ),
+        messageCount:chatMessage(count)
+      `)
+      .eq('userId', userId)
+      .order('updatedAt', { ascending: false });
+
+    if (error) {
+      throw new Error('Failed to fetch user chats');
+    }
+
+    // Transform the data to match the previous format
+    return chats.map(chat => ({
+      ...chat,
+      messages: chat.messages.slice(0, 1), // Only keep the latest message
+      _count: {
+        messages: chat.messageCount,
       },
-      orderBy: { updatedAt: 'desc' },
-    });
+    }));
   }
 
   async getChatDetails(chatId: string, userId?: string) {
-    const chat = await this.prisma.supportChat.findUnique({
-      where: { id: chatId },
-      include: {
-        user: {
-          select: {
-            id: true,
-            email: true,
-            fullName: true,
-          },
-        },
-        messages: {
-          orderBy: { createdAt: 'asc' },
-          include: {
-            sender: {
-              select: {
-                id: true,
-                email: true,
-                fullName: true,
-              },
-            },
-          },
-        },
-      },
-    });
+    const { data: chat, error } = await this.supabase
+      .from('supportChat')
+      .select(`
+        *,
+        user:users(id, email, fullName),
+        messages:chatMessage(
+          *,
+          sender:users(id, email, fullName)
+        )
+      `)
+      .eq('id', chatId)
+      .order('messages.createdAt', { referencedTable: 'chatMessage', ascending: true })
+      .single();
 
-    if (!chat) {
+    if (!chat || error) {
       throw new NotFoundException('Chat not found');
     }
 
@@ -164,21 +160,18 @@ export class CustomerSupportService {
   }
 
   async updateChatStatus(chatId: string, dto: UpdateChatStatusDto) {
-    return this.prisma.supportChat.update({
-      where: { id: chatId },
-      data: {
-        status: dto.status,
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            email: true,
-            fullName: true,
-          },
-        },
-      },
-    });
+    const { data, error } = await this.supabase
+      .from('supportChat')
+      .update({ status: dto.status })
+      .eq('id', chatId)
+      .select('*, user:users(id, email, fullName)')
+      .single();
+
+    if (error || !data) {
+      throw new Error('Failed to update chat status');
+    }
+
+    return data;
   }
 
   async getAllChats(
@@ -187,46 +180,29 @@ export class CustomerSupportService {
     status?: ChatStatus,
     priority?: ChatPriority,
   ) {
-    const skip = (page - 1) * limit;
-    const where: any = {};
+    const start = (page - 1) * limit;
+    const end = start + limit - 1;
 
-    if (status) where.status = status;
-    if (priority) where.priority = priority;
+    let query = this.supabase
+      .from('supportChat')
+      .select(`
+        *,
+        user:users(id, email, fullName),
+        messages:chatMessage(
+          *,
+          sender:users(id, email, fullName)
+        ),
+        messageCount:chatMessage(count)
+      `, { count: 'exact' });
 
-    const [chats, total] = await Promise.all([
-      this.prisma.supportChat.findMany({
-        where,
-        skip,
-        take: limit,
-        include: {
-          user: {
-            select: {
-              id: true,
-              email: true,
-              fullName: true,
-            },
-          },
-          messages: {
-            orderBy: { createdAt: 'desc' },
-            take: 1,
-            include: {
-              sender: {
-                select: {
-                  id: true,
-                  email: true,
-                  fullName: true,
-                },
-              },
-            },
-          },
-          _count: {
-            select: { messages: true },
-          },
-        },
-        orderBy: { updatedAt: 'desc' },
-      }),
-      this.prisma.supportChat.count({ where }),
-    ]);
+    if (status) query = query.eq('status', status);
+    if (priority) query = query.eq('priority', priority);
+
+    query = query
+      .order('updatedAt', { ascending: false })
+      .range(start, end);
+
+    const { data: chats, count: total, error } = await query;
 
     return {
       chats,
@@ -241,69 +217,65 @@ export class CustomerSupportService {
 
   async getChatStats() {
     const [
-      totalChats,
-      openChats,
-      inProgressChats,
-      closedChats,
-      highPriorityChats,
+      { count: totalChats },
+      { count: openChats },
+      { count: inProgressChats },
+      { count: closedChats },
+      { count: highPriorityChats },
+      { data: priorityStats },
     ] = await Promise.all([
-      this.prisma.supportChat.count(),
-      this.prisma.supportChat.count({
-        where: { status: 'OPEN' },
-      }),
-      this.prisma.supportChat.count({
-        where: { status: 'IN_PROGRESS' },
-      }),
-      this.prisma.supportChat.count({
-        where: { status: 'CLOSED' },
-      }),
-      this.prisma.supportChat.count({
-        where: { priority: 'HIGH' },
-      }),
+      this.supabase
+        .from('supportChat')
+        .select('*', { count: 'exact', head: true }),
+      this.supabase
+        .from('supportChat')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'OPEN'),
+      this.supabase
+        .from('supportChat')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'IN_PROGRESS'),
+      this.supabase
+        .from('supportChat')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'CLOSED'),
+      this.supabase
+        .from('supportChat')
+        .select('*', { count: 'exact', head: true })
+        .eq('priority', 'HIGH'),
+      this.supabase.rpc('get_chats_by_priority'),
     ]);
 
-    const chatsByPriority = await this.getChatsByPriorityStats();
+    const chatsByPriority = priorityStats.reduce((acc, curr) => {
+      acc[curr.priority] = parseInt(curr.count);
+      return acc;
+    }, {} as Record<string, number>);
 
     return {
-      totalChats,
-      openChats,
-      inProgressChats,
-      closedChats,
-      highPriorityChats,
+      totalChats: totalChats || 0,
+      openChats: openChats || 0,
+      inProgressChats: inProgressChats || 0,
+      closedChats: closedChats || 0,
+      highPriorityChats: highPriorityChats || 0,
       chatsByPriority,
     };
   }
 
-  private async getChatsByPriorityStats() {
-    const priorityCounts = await this.prisma.supportChat.groupBy({
-      by: ['priority'],
-      _count: {
-        priority: true,
-      },
-    });
-
-    return priorityCounts.reduce((acc, curr) => {
-      acc[curr.priority] = curr._count.priority;
-      return acc;
-    }, {} as Record<string, number>);
-  }
-
   async assignChatToSupport(chatId: string, supportUserId: string) {
-    return this.prisma.supportChat.update({
-      where: { id: chatId },
-      data: {
+    const { data, error } = await this.supabase
+      .from('supportChat')
+      .update({
         assignedTo: supportUserId,
         status: 'IN_PROGRESS',
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            email: true,
-            fullName: true,
-          },
-        },
-      },
-    });
+      })
+      .eq('id', chatId)
+      .select('*, user:users(id, email, fullName)')
+      .single();
+
+    if (error || !data) {
+      throw new Error('Failed to assign chat to support');
+    }
+
+    return data;
   }
 }

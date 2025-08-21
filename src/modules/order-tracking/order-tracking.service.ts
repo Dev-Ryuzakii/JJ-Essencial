@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { ConfigService } from '@nestjs/config';
+import { SupabaseConfig } from '../../config/supabase.config';
 
 type OrderStatus = 'PENDING' | 'PAID' | 'COMPLETED' | 'CANCELLED';
 
@@ -18,57 +19,60 @@ export interface UpdateOrderTrackingDto {
 
 @Injectable()
 export class OrderTrackingService {
-  private prisma = new PrismaClient();
+  private supabase;
+
+  constructor(private configService: ConfigService) {
+    this.supabase = SupabaseConfig.getInstance(this.configService);
+  }
 
   async createTrackingEntry(dto: CreateOrderTrackingDto) {
-    return this.prisma.orderTracking.create({
-      data: {
-        orderId: dto.orderId,
+    const { data: tracking, error } = await this.supabase
+      .from('order_tracking')
+      .insert([{
+        order_id: dto.orderId,
         status: dto.status,
         location: dto.location,
         notes: dto.notes,
-      },
-      include: {
-        order: {
-          select: {
-            id: true,
-            status: true,
-            user: {
-              select: {
-                id: true,
-                email: true,
-                fullName: true,
-              },
-            },
-          },
-        },
-      },
-    });
+      }])
+      .select(`
+        *,
+        order:order_id (
+          id,
+          status,
+          user:user_id (
+            id,
+            email,
+            full_name
+          )
+        )
+      `)
+      .single();
+
+    if (error) throw new Error(error.message);
+    return tracking;
   }
 
   async getOrderTracking(orderId: string) {
-    const tracking = await this.prisma.orderTracking.findMany({
-      where: { orderId },
-      orderBy: { timestamp: 'asc' },
-      include: {
-        order: {
-          select: {
-            id: true,
-            status: true,
-            totalAmount: true,
-            createdAt: true,
-            user: {
-              select: {
-                id: true,
-                email: true,
-                fullName: true,
-              },
-            },
-          },
-        },
-      },
-    });
+    const { data: tracking, error } = await this.supabase
+      .from('order_tracking')
+      .select(`
+        *,
+        order:order_id (
+          id,
+          status,
+          total_amount,
+          created_at,
+          user:user_id (
+            id,
+            email,
+            full_name
+          )
+        )
+      `)
+      .eq('order_id', orderId)
+      .order('timestamp', { ascending: true });
 
+    if (error) throw new Error(error.message);
     if (!tracking.length) {
       throw new NotFoundException('Order tracking not found');
     }
@@ -84,10 +88,12 @@ export class OrderTrackingService {
   async updateOrderStatus(orderId: string, dto: UpdateOrderTrackingDto) {
     // First, update the order status if provided
     if (dto.status) {
-      await this.prisma.orders.update({
-        where: { id: orderId },
-        data: { status: dto.status },
-      });
+      const { error: updateError } = await this.supabase
+        .from('orders')
+        .update({ status: dto.status })
+        .eq('id', orderId);
+
+      if (updateError) throw new Error(updateError.message);
     }
 
     // Create a new tracking entry
@@ -100,44 +106,43 @@ export class OrderTrackingService {
   }
 
   async getOrdersByStatus(status: OrderStatus) {
-    return this.prisma.orders.findMany({
-      where: { status },
-      include: {
-        user: {
-          select: {
-            id: true,
-            email: true,
-            fullName: true,
-          },
-        },
-        orderItems: {
-          include: {
-            product: {
-              select: {
-                id: true,
-                name: true,
-                price: true,
-                images: true,
-              },
-            },
-          },
-        },
-        tracking: {
-          orderBy: { timestamp: 'desc' },
-          take: 1,
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    const { data: orders, error } = await this.supabase
+      .from('orders')
+      .select(`
+        *,
+        user:user_id (
+          id,
+          email,
+          full_name
+        ),
+        order_items:order_items (
+          *,
+          product:product_id (
+            id,
+            name,
+            price,
+            images
+          )
+        ),
+        tracking:order_tracking (
+          *
+        )
+      `)
+      .eq('status', status)
+      .order('timestamp', { foreignTable: 'tracking', ascending: false })
+      .order('created_at', { ascending: false });
+
+    if (error) throw new Error(error.message);
+    return orders;
   }
 
   async getUserOrderTracking(userId: string, orderId: string) {
-    const order = await this.prisma.orders.findFirst({
-      where: {
-        id: orderId,
-        userId: userId,
-      },
-    });
+    const { data: order, error } = await this.supabase
+      .from('orders')
+      .select()
+      .eq('id', orderId)
+      .eq('user_id', userId)
+      .single();
 
     if (!order) {
       throw new NotFoundException('Order not found');
@@ -147,83 +152,68 @@ export class OrderTrackingService {
   }
 
   async getAllOrdersTracking(page: number = 1, limit: number = 20) {
-    const skip = (page - 1) * limit;
+    const start = (page - 1) * limit;
+    const end = start + limit - 1;
 
-    const [orders, total] = await Promise.all([
-      this.prisma.orders.findMany({
-        skip,
-        take: limit,
-        include: {
-          user: {
-            select: {
-              id: true,
-              email: true,
-              fullName: true,
-            },
-          },
-          tracking: {
-            orderBy: { timestamp: 'desc' },
-            take: 1,
-          },
-        },
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.prisma.orders.count(),
-    ]);
+    const { data: orders, count, error } = await this.supabase
+      .from('orders')
+      .select(`
+        *,
+        user:user_id (
+          id,
+          email,
+          full_name
+        ),
+        tracking:order_tracking (
+          *
+        )
+      `, { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(start, end);
+
+    if (error) throw new Error(error.message);
 
     return {
       orders,
       pagination: {
         page,
         limit,
-        total,
-        totalPages: Math.ceil(total / limit),
+        total: count || 0,
+        totalPages: Math.ceil((count || 0) / limit),
       },
     };
   }
 
   async getTrackingStats() {
-    const statusCounts = await this.prisma.orders.groupBy({
-      by: ['status'],
-      _count: {
-        status: true,
-      },
-    });
-
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
 
-    const [
-      totalOrders,
-      todayOrders,
-      pendingOrders,
-      paidOrders,
-      completedOrders,
-    ] = await Promise.all([
-      this.prisma.orders.count(),
-      this.prisma.orders.count({
-        where: {
-          createdAt: {
-            gte: todayStart,
-          },
-        },
-      }),
-      this.prisma.orders.count({
-        where: {
-          status: 'PENDING',
-        },
-      }),
-      this.prisma.orders.count({
-        where: {
-          status: 'PAID',
-        },
-      }),
-      this.prisma.orders.count({
-        where: {
-          status: 'COMPLETED',
-        },
-      }),
-    ]);
+    // Get all orders with their status
+    const { data: orders, error } = await this.supabase
+      .from('orders')
+      .select('status, created_at');
+
+    if (error) throw new Error(error.message);
+
+    // Count orders by status
+    const statusBreakdown = orders.reduce((acc: Record<string, number>, order: { status: string }) => {
+      acc[order.status] = (acc[order.status] || 0) + 1;
+      return acc;
+    }, {});
+
+    const totalOrders = orders.length;
+    const todayOrders = orders.filter(order => 
+      new Date(order.created_at) >= todayStart
+    ).length;
+    const pendingOrders = orders.filter(order => 
+      order.status === 'PENDING'
+    ).length;
+    const paidOrders = orders.filter(order => 
+      order.status === 'PAID'
+    ).length;
+    const completedOrders = orders.filter(order => 
+      order.status === 'COMPLETED'
+    ).length;
 
     return {
       totalOrders,
@@ -231,10 +221,7 @@ export class OrderTrackingService {
       pendingOrders,
       paidOrders,
       completedOrders,
-      statusBreakdown: statusCounts.reduce((acc, curr) => {
-        acc[curr.status] = curr._count.status;
-        return acc;
-      }, {} as Record<string, number>),
+      statusBreakdown,
     };
   }
 }

@@ -1,26 +1,32 @@
 import { ConfigService } from '@nestjs/config';
-import { PrismaClient } from '@prisma/client';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-export class DatabaseConfig {
-  private static instance: PrismaClient;
+export class SupabaseConfig {
+  private static instance: SupabaseClient;
 
-  static getInstance(configService?: ConfigService): PrismaClient {
-    if (!DatabaseConfig.instance) {
-      DatabaseConfig.instance = new PrismaClient({
-        datasources: {
-          db: {
-            url: configService?.get('DATABASE_URL') || process.env.DATABASE_URL,
-          },
+  static getInstance(configService?: ConfigService): SupabaseClient {
+    if (!SupabaseConfig.instance) {
+      const supabaseUrl = configService?.get('SUPABASE_URL') || process.env.SUPABASE_URL;
+      const supabaseKey = configService?.get('SUPABASE_KEY') || process.env.SUPABASE_KEY;
+
+      if (!supabaseUrl || !supabaseKey) {
+        throw new Error('Supabase configuration is missing. Please check your environment variables.');
+      }
+
+      SupabaseConfig.instance = createClient(supabaseUrl, supabaseKey, {
+        auth: {
+          persistSession: false // Since this is server-side
         },
-        log: ['query', 'info', 'warn', 'error'],
+        db: {
+          schema: 'public'
+        }
       });
     }
-    return DatabaseConfig.instance;
+    return SupabaseConfig.instance;
   }
 
   static async disconnect(): Promise<void> {
-    if (DatabaseConfig.instance) {
-      await DatabaseConfig.instance.$disconnect();
-    }
+    // Supabase client doesn't require explicit disconnection
+    SupabaseConfig.instance = null;
   }
 }

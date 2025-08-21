@@ -1,15 +1,15 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
-import { DatabaseConfig } from '../../config/database.config';
+import { SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseConfig } from '../../config/supabase.config';
 import { CreateOrderDto, UpdateOrderStatusDto, OrderItemDto } from './dto/order.dto';
 import { PaginationDto } from '../../common/dto/common.dto';
 
 @Injectable()
 export class OrdersService {
-  private prisma: PrismaClient;
+  private supabase: SupabaseClient;
 
   constructor() {
-    this.prisma = DatabaseConfig.getInstance();
+    this.supabase = SupabaseConfig.getInstance();
   }
 
   async create(userId: string, createOrderDto: CreateOrderDto) {
@@ -17,14 +17,13 @@ export class OrdersService {
 
     // Validate products and check stock
     const productIds = items.map(item => item.productId);
-    const products = await this.prisma.product.findMany({
-      where: {
-        id: { in: productIds },
-        isActive: true,
-      },
-    });
+    const { data: products } = await this.supabase
+      .from('product')
+      .select('*')
+      .in('id', productIds)
+      .eq('isActive', true);
 
-    if (products.length !== productIds.length) {
+    if (!products || products.length !== productIds.length) {
       throw new BadRequestException('One or more products not found or inactive');
     }
 
@@ -39,13 +38,14 @@ export class OrdersService {
     // Validate saved address if provided
     let addressId = null;
     if (savedAddressId) {
-      const savedAddress = await this.prisma.userAddress.findFirst({
-        where: {
-          id: savedAddressId,
-          userId,
-          isActive: true,
-        },
-      });
+      const { data: savedAddress } = await this.supabase
+        .from('userAddress')
+        .select('*')
+        .eq('id', savedAddressId)
+        .eq('userId', userId)
+        .eq('isActive', true)
+        .single();
+      
       if (savedAddress) {
         addressId = savedAddressId;
       }
@@ -65,123 +65,95 @@ export class OrdersService {
       };
     });
 
-    // Create order with transaction
-    const order = await this.prisma.$transaction(async (tx) => {
-      // Create the order
-      const newOrder = await tx.orders.create({
-        data: {
-          userId,
-          addressId,
-          totalAmount,
-          status: 'PENDING',
-          deliveryPhone: deliveryAddress.phone,
-          deliveryAddress: deliveryAddress.address,
-          deliveryCity: deliveryAddress.city,
-          deliveryState: deliveryAddress.state,
-          deliveryPostal: deliveryAddress.postalCode,
-          deliveryCountry: deliveryAddress.country,
-          orderNotes,
-          orderItems: {
-            create: orderItems,
-          },
-        },
-        include: {
-          orderItems: {
-            include: {
-              product: {
-                select: {
-                  id: true,
-                  name: true,
-                  images: true,
-                },
-              },
-            },
-          },
-          user: {
-            select: {
-              id: true,
-              email: true,
-              fullName: true,
-            },
-          },
-          address: true,
-        },
-      });
-
-      // Update product stock
-      for (const item of items) {
-        await tx.product.update({
-          where: { id: item.productId },
-          data: {
-            stock: {
-              decrement: item.quantity,
-            },
-          },
-        });
-      }
-
-      return newOrder;
+    // Create order and update stock in a transaction
+    const { data: order, error } = await this.supabase.rpc('create_order', {
+      p_user_id: userId,
+      p_address_id: addressId,
+      p_total_amount: totalAmount,
+      p_delivery_phone: deliveryAddress.phone,
+      p_delivery_address: deliveryAddress.address,
+      p_delivery_city: deliveryAddress.city,
+      p_delivery_state: deliveryAddress.state,
+      p_delivery_postal: deliveryAddress.postalCode,
+      p_delivery_country: deliveryAddress.country,
+      p_order_notes: orderNotes,
+      p_order_items: orderItems
     });
+
+    if (error) {
+      throw new BadRequestException(error.message);
+    }
+
+    // Get the complete order details
+    const { data: completeOrder } = await this.supabase
+      .from('orders')
+      .select(`
+        *,
+        orderItems (
+          *,
+          product (
+            id,
+            name,
+            images
+          )
+        ),
+        user (
+          id,
+          email,
+          fullName
+        ),
+        address (*)
+      `)
+      .eq('id', order.id)
+      .single();
 
     return this.formatOrder(order);
   }
 
   async findAll(pagination: PaginationDto, isAdmin: boolean = false, userId?: string) {
-    const { page, limit, search, sortBy, sortOrder } = pagination;
-    const skip = (page - 1) * limit;
+    const { page = 1, limit = 10, search, sortBy, sortOrder } = pagination;
+    const start = (page - 1) * limit;
+    const end = start + limit - 1;
 
-    // Build where clause
-    const where: any = {};
-    
+    let query = this.supabase
+      .from('orders')
+      .select(`
+        *,
+        orderItems (
+          *,
+          product (
+            id,
+            name,
+            images
+          )
+        ),
+        user (
+          id,
+          email,
+          fullName
+        )
+      `, { count: 'exact' });
+
+    // Apply filters
     if (!isAdmin && userId) {
-      where.userId = userId;
+      query = query.eq('userId', userId);
     }
 
     if (search) {
-      where.OR = [
-        { id: { contains: search, mode: 'insensitive' } },
-        { paymentRef: { contains: search, mode: 'insensitive' } },
-        { user: { email: { contains: search, mode: 'insensitive' } } },
-      ];
+      query = query.or(`id.ilike.%${search}%,paymentRef.ilike.%${search}%,user.email.ilike.%${search}%`);
     }
 
-    // Build orderBy clause
-    const orderBy: any = {};
+    // Apply sorting
     if (sortBy) {
-      orderBy[sortBy] = sortOrder;
+      query = query.order(sortBy, { ascending: sortOrder === 'asc' });
     } else {
-      orderBy.createdAt = 'desc';
+      query = query.order('createdAt', { ascending: false });
     }
 
-    const [orders, total] = await Promise.all([
-      this.prisma.orders.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy,
-        include: {
-          orderItems: {
-            include: {
-              product: {
-                select: {
-                  id: true,
-                  name: true,
-                  images: true,
-                },
-              },
-            },
-          },
-          user: {
-            select: {
-              id: true,
-              email: true,
-              fullName: true,
-            },
-          },
-        },
-      }),
-      this.prisma.orders.count({ where }),
-    ]);
+    // Apply pagination
+    query = query.range(start, end);
+
+    const { data: orders, count: total, error } = await query;
 
     return {
       orders: orders.map(this.formatOrder),
@@ -190,37 +162,33 @@ export class OrdersService {
   }
 
   async findOne(id: string, userId?: string, isAdmin: boolean = false) {
-    const where: any = { id };
+    let query = this.supabase
+      .from('orders')
+      .select(`
+        *,
+        orderItems (
+          *,
+          product (
+            id,
+            name,
+            images
+          )
+        ),
+        user (
+          id,
+          email,
+          fullName
+        )
+      `)
+      .eq('id', id);
     
     if (!isAdmin && userId) {
-      where.userId = userId;
+      query = query.eq('userId', userId);
     }
 
-    const order = await this.prisma.orders.findFirst({
-      where,
-      include: {
-        orderItems: {
-          include: {
-            product: {
-              select: {
-                id: true,
-                name: true,
-                images: true,
-              },
-            },
-          },
-        },
-        user: {
-          select: {
-            id: true,
-            email: true,
-            fullName: true,
-          },
-        },
-      },
-    });
+    const { data: order, error } = await query.single();
 
-    if (!order) {
+    if (!order || error) {
       throw new NotFoundException('Order not found');
     }
 
@@ -230,126 +198,146 @@ export class OrdersService {
   async updateStatus(id: string, updateOrderStatusDto: UpdateOrderStatusDto) {
     const { status } = updateOrderStatusDto;
 
-    const existingOrder = await this.prisma.orders.findUnique({
-      where: { id },
-    });
+    const { data: existingOrder, error: findError } = await this.supabase
+      .from('orders')
+      .select('id')
+      .eq('id', id)
+      .single();
 
-    if (!existingOrder) {
+    if (!existingOrder || findError) {
       throw new NotFoundException('Order not found');
     }
 
-    const order = await this.prisma.orders.update({
-      where: { id },
-      data: { status },
-      include: {
-        orderItems: {
-          include: {
-            product: {
-              select: {
-                id: true,
-                name: true,
-                images: true,
-              },
-            },
-          },
-        },
-        user: {
-          select: {
-            id: true,
-            email: true,
-            fullName: true,
-          },
-        },
-      },
-    });
+    const { data: order, error: updateError } = await this.supabase
+      .from('orders')
+      .update({ status })
+      .eq('id', id)
+      .select(`
+        *,
+        orderItems (
+          *,
+          product (
+            id,
+            name,
+            images
+          )
+        ),
+        user (
+          id,
+          email,
+          fullName
+        )
+      `)
+      .single();
 
     return this.formatOrder(order);
   }
 
   async updatePaymentRef(id: string, paymentRef: string) {
-    const order = await this.prisma.orders.update({
-      where: { id },
-      data: { paymentRef },
-      include: {
-        orderItems: {
-          include: {
-            product: {
-              select: {
-                id: true,
-                name: true,
-                images: true,
-              },
-            },
-          },
-        },
-        user: {
-          select: {
-            id: true,
-            email: true,
-            fullName: true,
-          },
-        },
-      },
-    });
+    const { data: order, error } = await this.supabase
+      .from('orders')
+      .update({ paymentRef })
+      .eq('id', id)
+      .select(`
+        *,
+        orderItems (
+          *,
+          product (
+            id,
+            name,
+            images
+          )
+        ),
+        user (
+          id,
+          email,
+          fullName
+        )
+      `)
+      .single();
 
     return this.formatOrder(order);
   }
 
   async getOrderStats(userId?: string) {
     try {
-      const where = userId ? { userId } : {};
+      const baseQuery = this.supabase.from('orders');
+      
+      // Create filtered base query
+      const userFilter = userId ? { userId } : {};
 
-      const [total, pending, paid, completed, cancelled] = await Promise.all([
-        this.prisma.orders.count({ where }),
-        this.prisma.orders.count({ where: { ...where, status: 'PENDING' } }),
-        this.prisma.orders.count({ where: { ...where, status: 'PAID' } }),
-        this.prisma.orders.count({ where: { ...where, status: 'COMPLETED' } }),
-        this.prisma.orders.count({ where: { ...where, status: 'CANCELLED' } }),
+      const [
+        totalResult,
+        pendingResult,
+        paidResult,
+        completedResult,
+        cancelledResult,
+        paidOrdersResult,
+        recentOrdersResult
+      ] = await Promise.all([
+        // Total count
+        baseQuery
+          .select('*', { count: 'exact', head: true })
+          .match(userFilter),
+        
+        // Status counts
+        baseQuery
+          .select('*', { count: 'exact', head: true })
+          .match({ ...userFilter, status: 'PENDING' }),
+        baseQuery
+          .select('*', { count: 'exact', head: true })
+          .match({ ...userFilter, status: 'PAID' }),
+        baseQuery
+          .select('*', { count: 'exact', head: true })
+          .match({ ...userFilter, status: 'COMPLETED' }),
+        baseQuery
+          .select('*', { count: 'exact', head: true })
+          .match({ ...userFilter, status: 'CANCELLED' }),
+        
+        // Get paid orders for revenue calculation
+        baseQuery
+          .select('totalAmount')
+          .match(userFilter)
+          .in('status', ['PAID', 'COMPLETED']),
+        
+        // Get recent orders
+        baseQuery
+          .select(`
+            *,
+            orderItems (
+              *,
+              product (
+                id,
+                name,
+                images
+              )
+            )
+          `)
+          .match(userFilter)
+          .order('createdAt', { ascending: false })
+          .limit(5)
       ]);
 
-      // Calculate total revenue for completed and paid orders
-      const revenue = await this.prisma.orders.aggregate({
-        _sum: {
-          totalAmount: true,
-        },
-        where: {
-          ...where,
-          status: { in: ['PAID', 'COMPLETED'] },
-        },
-      });
+      const revenue = paidOrdersResult.data?.reduce(
+        (sum, order) => sum + Number(order.totalAmount), 
+        0
+      ) || 0;
 
-      // Get recent orders
-      const recentOrders = await this.prisma.orders.findMany({
-        where,
-        take: 5,
-        orderBy: {
-          createdAt: 'desc',
-        },
-        include: {
-          orderItems: {
-            include: {
-              product: {
-                select: {
-                  id: true,
-                  name: true,
-                  images: true,
-                },
-              },
-            },
-          },
-        },
-      });
+      const totalRevenue = paidOrdersResult.data?.reduce(
+        (sum, order) => sum + Number(order.totalAmount), 
+        0
+      ) || 0;
 
       return {
         counts: {
-          total,
-          pending,
-          paid,
-          completed,
-          cancelled,
+          total: totalResult.count || 0,
+          pending: pendingResult.count || 0,
+          paid: paidResult.count || 0,
+          completed: completedResult.count || 0,
+          cancelled: cancelledResult.count || 0,
         },
-        totalRevenue: Number(revenue._sum.totalAmount || 0),
-        recentOrders: recentOrders.map(this.formatOrder),
+        totalRevenue: revenue,
+        recentOrders: (recentOrdersResult.data || []).map(this.formatOrder),
       };
     } catch (error) {
       console.error('Error getting order stats:', error);

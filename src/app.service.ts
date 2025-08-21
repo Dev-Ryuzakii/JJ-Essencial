@@ -20,7 +20,7 @@ export class AppService {
     return {
       version: '1.0.0',
       name: 'E-commerce Backend API',
-      description: 'Production-ready e-commerce backend with Supabase, Prisma, and payment gateways',
+      description: 'Production-ready e-commerce backend with Supabase and payment gateways',
       author: 'Your Team',
       build: {
         date: new Date().toISOString(),

@@ -1,26 +1,32 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
-import { DatabaseConfig } from '../../config/database.config';
+import { ConfigService } from '@nestjs/config';
 import { CreateProductDto, UpdateProductDto, ProductFilterDto } from './dto/product.dto';
 import { PaginationDto } from '../../common/dto/common.dto';
 import { UploadService } from '../upload/upload.service';
+import { SupabaseConfig } from '../../config/supabase.config';
 
 @Injectable()
 export class ProductsService {
-  private prisma: PrismaClient;
+  private supabase;
 
-  constructor(private readonly uploadService: UploadService) {
-    this.prisma = DatabaseConfig.getInstance();
+  constructor(
+    private readonly uploadService: UploadService,
+    private readonly configService: ConfigService,
+  ) {
+    this.supabase = SupabaseConfig.getInstance(this.configService);
   }
 
   async create(createProductDto: CreateProductDto) {
-    const product = await this.prisma.product.create({
-      data: {
+    const { data: product, error } = await this.supabase
+      .from('product')
+      .insert([{
         ...createProductDto,
         price: createProductDto.price,
-      },
-    });
+      }])
+      .select()
+      .single();
 
+    if (error) throw new Error(error.message);
     return this.formatProduct(product);
   }
 
@@ -33,14 +39,17 @@ export class ProductsService {
       imageUrls = uploadResults.map(result => result.url);
     }
 
-    const product = await this.prisma.product.create({
-      data: {
+    const { data: product, error } = await this.supabase
+      .from('product')
+      .insert([{
         ...createProductDto,
         price: createProductDto.price,
         images: imageUrls,
-      },
-    });
+      }])
+      .select()
+      .single();
 
+    if (error) throw new Error(error.message);
     return this.formatProduct(product);
   }
 
@@ -48,63 +57,63 @@ export class ProductsService {
     const { page, limit, search, sortBy, sortOrder } = pagination;
     const { category, minPrice, maxPrice, inStock } = filters;
 
-    const skip = (page - 1) * limit;
+    const start = (page - 1) * limit;
+    const end = start + limit - 1;
 
-    // Build where clause
-    const where: any = {
-      isActive: true,
-    };
+    let query = this.supabase
+      .from('product')
+      .select('*', { count: 'exact' })
+      .eq('is_active', true);
 
+    // Add search filter
     if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } },
-        { category: { contains: search, mode: 'insensitive' } },
-      ];
+      query = query.or(`name.ilike.%${search}%,description.ilike.%${search}%,category.ilike.%${search}%`);
     }
 
+    // Add category filter
     if (category) {
-      where.category = { contains: category, mode: 'insensitive' };
+      query = query.ilike('category', `%${category}%`);
     }
 
-    if (minPrice !== undefined || maxPrice !== undefined) {
-      where.price = {};
-      if (minPrice !== undefined) where.price.gte = minPrice;
-      if (maxPrice !== undefined) where.price.lte = maxPrice;
+    // Add price range filter
+    if (minPrice !== undefined) {
+      query = query.gte('price', minPrice);
+    }
+    if (maxPrice !== undefined) {
+      query = query.lte('price', maxPrice);
     }
 
+    // Add stock filter
     if (inStock) {
-      where.stock = { gt: 0 };
+      query = query.gt('stock', 0);
     }
 
-    // Build orderBy clause
-    const orderBy: any = {};
+    // Add sorting
     if (sortBy) {
-      orderBy[sortBy] = sortOrder;
+      query = query.order(sortBy, { ascending: sortOrder === 'asc' });
     } else {
-      orderBy.createdAt = 'desc';
+      query = query.order('created_at', { ascending: false });
     }
 
-    const [products, total] = await Promise.all([
-      this.prisma.product.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy,
-      }),
-      this.prisma.product.count({ where }),
-    ]);
+    // Add pagination
+    query = query.range(start, end);
+
+    const { data: products, count: total, error } = await query;
+
+    if (error) throw new Error(error.message);
 
     return {
       products: products.map(this.formatProduct),
-      total,
+      total: total || 0,
     };
   }
 
   async findOne(id: string) {
-    const product = await this.prisma.product.findUnique({
-      where: { id },
-    });
+    const { data: product, error } = await this.supabase
+      .from('product')
+      .select()
+      .eq('id', id)
+      .single();
 
     if (!product) {
       throw new NotFoundException('Product not found');
@@ -114,26 +123,33 @@ export class ProductsService {
   }
 
   async update(id: string, updateProductDto: UpdateProductDto) {
-    const existingProduct = await this.prisma.product.findUnique({
-      where: { id },
-    });
+    const { data: existingProduct, error: findError } = await this.supabase
+      .from('product')
+      .select()
+      .eq('id', id)
+      .single();
 
     if (!existingProduct) {
       throw new NotFoundException('Product not found');
     }
 
-    const product = await this.prisma.product.update({
-      where: { id },
-      data: updateProductDto,
-    });
+    const { data: product, error: updateError } = await this.supabase
+      .from('product')
+      .update(updateProductDto)
+      .eq('id', id)
+      .select()
+      .single();
 
+    if (updateError) throw new Error(updateError.message);
     return this.formatProduct(product);
   }
 
   async updateWithImages(id: string, updateProductDto: UpdateProductDto, images?: Express.Multer.File[]) {
-    const existingProduct = await this.prisma.product.findUnique({
-      where: { id },
-    });
+    const { data: existingProduct, error: findError } = await this.supabase
+      .from('product')
+      .select()
+      .eq('id', id)
+      .single();
 
     if (!existingProduct) {
       throw new NotFoundException('Product not found');
@@ -148,39 +164,50 @@ export class ProductsService {
       imageUrls = [...imageUrls, ...newImageUrls];
     }
 
-    const product = await this.prisma.product.update({
-      where: { id },
-      data: {
+    const { data: product, error: updateError } = await this.supabase
+      .from('product')
+      .update({
         ...updateProductDto,
         images: imageUrls,
-      },
-    });
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (updateError) throw new Error(updateError.message);
 
     return this.formatProduct(product);
   }
 
   async remove(id: string) {
-    const existingProduct = await this.prisma.product.findUnique({
-      where: { id },
-    });
+    const { data: existingProduct, error: findError } = await this.supabase
+      .from('product')
+      .select()
+      .eq('id', id)
+      .single();
 
     if (!existingProduct) {
       throw new NotFoundException('Product not found');
     }
 
-    // Soft delete by setting isActive to false
-    const product = await this.prisma.product.update({
-      where: { id },
-      data: { isActive: false },
-    });
+    // Soft delete by setting is_active to false
+    const { data: product, error: updateError } = await this.supabase
+      .from('product')
+      .update({ is_active: false })
+      .eq('id', id)
+      .select()
+      .single();
 
+    if (updateError) throw new Error(updateError.message);
     return this.formatProduct(product);
   }
 
   async updateStock(id: string, quantity: number, operation: 'add' | 'subtract' = 'subtract') {
-    const product = await this.prisma.product.findUnique({
-      where: { id },
-    });
+    const { data: product, error: findError } = await this.supabase
+      .from('product')
+      .select()
+      .eq('id', id)
+      .single();
 
     if (!product) {
       throw new NotFoundException('Product not found');
@@ -196,58 +223,54 @@ export class ProductsService {
       }
     }
 
-    const updatedProduct = await this.prisma.product.update({
-      where: { id },
-      data: { stock: newStock },
-    });
+    const { data: updatedProduct, error: updateError } = await this.supabase
+      .from('product')
+      .update({ stock: newStock })
+      .eq('id', id)
+      .select()
+      .single();
 
+    if (updateError) throw new Error(updateError.message);
     return this.formatProduct(updatedProduct);
   }
 
   async getCategories() {
-    const categories = await this.prisma.product.findMany({
-      where: { isActive: true },
-      select: { category: true },
-      distinct: ['category'],
-    });
+    const { data: categories, error } = await this.supabase
+      .from('product')
+      .select('category')
+      .eq('is_active', true)
+      .not('category', 'is', null);
 
-    return categories
-      .map(item => item.category)
-      .filter(category => category !== null && category !== '');
+    if (error) throw new Error(error.message);
+
+    const uniqueCategories = [...new Set(categories.map(item => item.category))];
+    return uniqueCategories.filter(category => category !== '');
   }
 
   async getLowStockProducts(threshold: number = 10) {
     try {
-      // Use the product's own lowStockThreshold when available, otherwise use the provided threshold
-      const products = await this.prisma.product.findMany({
-        where: {
-          isActive: true,
-          OR: [
-            // Either stock is below the product's own threshold
-            {
-              stock: { lte: this.prisma.product.fields.lowStockThreshold },
-            },
-            // Or stock is below the provided threshold
-            {
-              stock: { lte: threshold },
-            }
-          ],
-        },
-        orderBy: { stock: 'asc' },
-      });
+      // Get products with their low stock threshold or default threshold
+      const { data: products, error } = await this.supabase
+        .from('product')
+        .select()
+        .eq('is_active', true)
+        .or(`stock.lte.${threshold},and(stock.lte.low_stock_threshold)`)
+        .order('stock', { ascending: true });
 
+      if (error) throw new Error(error.message);
       return products.map(this.formatProduct);
+      
     } catch (error) {
       console.error('Error fetching low stock products:', error);
-      // Fallback to simpler query if the first one fails
-      const products = await this.prisma.product.findMany({
-        where: {
-          isActive: true,
-          stock: { lte: threshold },
-        },
-        orderBy: { stock: 'asc' },
-      });
-      
+      // Fallback to simpler query
+      const { data: products, error: fallbackError } = await this.supabase
+        .from('product')
+        .select()
+        .eq('is_active', true)
+        .lte('stock', threshold)
+        .order('stock', { ascending: true });
+
+      if (fallbackError) throw new Error(fallbackError.message);
       return products.map(this.formatProduct);
     }
   }

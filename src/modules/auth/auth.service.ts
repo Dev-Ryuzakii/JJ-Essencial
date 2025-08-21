@@ -1,17 +1,13 @@
 import { Injectable, UnauthorizedException, ConflictException, NotFoundException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { PrismaClient } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseConfig } from '../../config/supabase.config';
-import { DatabaseConfig } from '../../config/database.config';
 import { EmailService } from '../email/email.service';
 import { SignUpDto, SignInDto, AuthResponseDto, ResetPasswordDto, AdminSignInDto } from './dto/auth.dto';
-import * as bcrypt from 'bcryptjs';
 
 @Injectable()
 export class AuthService {
   private supabase;
-  private prisma: PrismaClient;
   private readonly logger = new Logger(AuthService.name);
 
   constructor(
@@ -31,10 +27,6 @@ export class AuthService {
       // Initialize Supabase client
       this.supabase = SupabaseConfig.getInstance(this.configService);
       this.logger.log('Supabase client initialized successfully');
-      
-      // Initialize Prisma client
-      this.prisma = DatabaseConfig.getInstance(this.configService);
-      this.logger.log('Prisma client initialized successfully');
     } catch (error) {
       this.logger.error(`Error initializing services: ${error.message}`);
     }
@@ -44,9 +36,11 @@ export class AuthService {
     const { email, password, fullName } = signUpDto;
 
     // Check if user already exists in our database
-    const existingProfile = await this.prisma.profile.findUnique({
-      where: { email },
-    });
+    const { data: existingProfile, error: profileError } = await this.supabase
+      .from('profile')
+      .select()
+      .eq('email', email)
+      .single();
 
     // Also check if user exists in Supabase Auth
     const { data: supabaseUser, error: searchError } = await this.supabase.auth.admin.listUsers({
@@ -68,11 +62,21 @@ export class AuthService {
         // User exists in our database but not in Supabase - this is an inconsistency
         this.logger.warn(`Inconsistency detected: User ${email} exists in local database but not in Supabase Auth`);
         
-        // Option: You could automatically create the user in Supabase here
-        // or you could delete the local profile to maintain consistency
+        // Delete the inconsistent profile and allow new signup
+        const { error: deleteError } = await this.supabase
+          .from('profile')
+          .delete()
+          .eq('email', email);
+        
+        if (deleteError) {
+          this.logger.error(`Failed to delete inconsistent profile: ${deleteError.message}`);
+          throw new ConflictException('Failed to resolve database inconsistency');
+        }
+        
+        this.logger.log(`Deleted inconsistent profile for ${email}`);
+      } else {
+        throw new ConflictException('User with this email already exists');
       }
-      
-      throw new ConflictException('User with this email already exists');
     }
     
     if (existsInSupabase) {
@@ -106,15 +110,40 @@ export class AuthService {
 
       this.logger.log('User created in Supabase Auth:', authData.user.id);
 
-      // Create profile in our database
-      const profile = await this.prisma.profile.create({
-        data: {
-          id: authData.user.id,
-          email,
-          fullName,
-          role: 'USER',
-        },
-      });
+      // Check if profile was created by trigger
+      let { data: profile, error: profileError } = await this.supabase
+        .from('profile')
+        .select()
+        .eq('id', authData.user.id)
+        .single();
+
+      if (!profile) {
+        // Profile wasn't created by trigger, create it manually
+        const { data: newProfile, error: createError } = await this.supabase
+          .from('profile')
+          .insert([{
+            id: authData.user.id,
+            email,
+            full_name: fullName,
+            role: 'USER',
+          }])
+          .select()
+          .single();
+
+        if (createError) throw new Error(createError.message);
+        profile = newProfile;
+      } else {
+        // Update the profile with full name if it was created by trigger
+        const { data: updatedProfile, error: updateError } = await this.supabase
+          .from('profile')
+          .update({ full_name: fullName })
+          .eq('id', authData.user.id)
+          .select()
+          .single();
+
+        if (updateError) throw new Error(updateError.message);
+        profile = updatedProfile;
+      }
 
       // Generate JWT token
       const payload = { 
@@ -157,9 +186,11 @@ export class AuthService {
     }
 
     // Get profile from our database
-    const profile = await this.prisma.profile.findUnique({
-      where: { email },
-    });
+    const { data: profile, error: profileError } = await this.supabase
+      .from('profile')
+      .select()
+      .eq('email', email)
+      .single();
 
     if (!profile) {
       throw new NotFoundException('User profile not found');
@@ -187,8 +218,8 @@ export class AuthService {
 
   async adminSignIn(adminSignInDto: AdminSignInDto): Promise<AuthResponseDto> {
     const { email, password } = adminSignInDto;
-    const adminEmail = this.configService.get('ADMIN_EMAIL') || 'admin@jjessential.com';
-    const adminPassword = this.configService.get('ADMIN_PASSWORD') || 'admin123';
+    const adminEmail = this.configService.get('ADMIN_EMAIL') || 'jadesola0518@gmail.com';
+    const adminPassword = this.configService.get('ADMIN_PASSWORD') || 'Amoke1805';
 
     // Check if credentials match the admin credentials
     if (email !== adminEmail || password !== adminPassword) {
@@ -196,10 +227,13 @@ export class AuthService {
     }
 
     try {
+      let currentAdminProfile;
       // Try to check if admin exists in the database
-      let adminProfile = await this.prisma.profile.findUnique({
-        where: { email },
-      });
+      const { data: adminProfile, error: findError } = await this.supabase
+        .from('profile')
+        .select()
+        .eq('email', email)
+        .single();
 
       // If admin doesn't exist in the database, create it
       if (!adminProfile) {
@@ -216,14 +250,19 @@ export class AuthService {
           }
 
           // Create admin profile in our database
-          adminProfile = await this.prisma.profile.create({
-            data: {
+          const { data: newAdminProfile, error: createError } = await this.supabase
+            .from('profile')
+            .insert([{
               id: authData.user.id,
               email,
-              fullName: 'Admin User',
+              full_name: 'Admin User',
               role: 'ADMIN',
-            },
-          });
+            }])
+            .select()
+            .single();
+
+          if (createError) throw new Error(createError.message);
+          currentAdminProfile = newAdminProfile;
         } catch (error) {
           // If there's a database error or admin exists in Supabase but not in our database
           // Generate a temporary admin session
@@ -251,17 +290,22 @@ export class AuthService {
       // Ensure the profile has ADMIN role
       if (adminProfile.role !== 'ADMIN') {
         // Update the role to ADMIN if it's not
-        adminProfile = await this.prisma.profile.update({
-          where: { id: adminProfile.id },
-          data: { role: 'ADMIN' },
-        });
+        const { data: updatedProfile, error: updateError } = await this.supabase
+          .from('profile')
+          .update({ role: 'ADMIN' })
+          .eq('id', adminProfile.id)
+          .select()
+          .single();
+
+        if (updateError) throw new Error(updateError.message);
+        currentAdminProfile = updatedProfile;
       }
 
       // Generate JWT token
       const payload = { 
-        sub: adminProfile.id, 
-        email: adminProfile.email, 
-        role: adminProfile.role 
+        sub: currentAdminProfile.id, 
+        email: currentAdminProfile.email, 
+        role: currentAdminProfile.role 
       };
       
       const access_token = this.jwtService.sign(payload);
@@ -269,10 +313,10 @@ export class AuthService {
       return {
         access_token,
         user: {
-          id: adminProfile.id,
-          email: adminProfile.email,
-          fullName: adminProfile.fullName,
-          role: adminProfile.role,
+          id: currentAdminProfile.id,
+          email: currentAdminProfile.email,
+          fullName: currentAdminProfile.full_name,
+          role: currentAdminProfile.role,
         },
       };
     } catch (error) {
@@ -303,10 +347,12 @@ export class AuthService {
   async resetPassword(resetPasswordDto: ResetPasswordDto): Promise<{ message: string }> {
     const { email } = resetPasswordDto;
 
-    // Check if user exists
-    const profile = await this.prisma.profile.findUnique({
-      where: { email },
-    });
+    // Check if user exists in Supabase
+    const { data: profile, error: profileError } = await this.supabase
+      .from('profile')
+      .select()
+      .eq('email', email)
+      .single();
 
     if (!profile) {
       // Don't reveal that user doesn't exist
@@ -326,9 +372,11 @@ export class AuthService {
   }
 
   async validateUser(userId: string): Promise<any> {
-    const profile = await this.prisma.profile.findUnique({
-      where: { id: userId },
-    });
+    const { data: profile, error } = await this.supabase
+      .from('profile')
+      .select()
+      .eq('id', userId)
+      .single();
 
     if (!profile) {
       throw new UnauthorizedException('User not found');
@@ -337,15 +385,17 @@ export class AuthService {
     return {
       id: profile.id,
       email: profile.email,
-      fullName: profile.fullName,
+      fullName: profile.full_name,
       role: profile.role,
     };
   }
 
   async getUserProfile(userId: string) {
-    const profile = await this.prisma.profile.findUnique({
-      where: { id: userId },
-    });
+    const { data: profile, error } = await this.supabase
+      .from('profile')
+      .select()
+      .eq('id', userId)
+      .single();
 
     if (!profile) {
       throw new NotFoundException('User profile not found');
@@ -354,25 +404,41 @@ export class AuthService {
     return {
       id: profile.id,
       email: profile.email,
-      fullName: profile.fullName,
+      fullName: profile.full_name,
       role: profile.role,
-      createdAt: profile.createdAt,
-      updatedAt: profile.updatedAt,
+      createdAt: profile.created_at,
+      updatedAt: profile.updated_at,
     };
   }
 
   async updateProfile(userId: string, updateData: { fullName?: string }) {
-    const profile = await this.prisma.profile.update({
-      where: { id: userId },
-      data: updateData,
-    });
+    const { data: existingProfile, error: findError } = await this.supabase
+      .from('profile')
+      .select()
+      .eq('id', userId)
+      .single();
+
+    if (!existingProfile) {
+      throw new NotFoundException('User profile not found');
+    }
+
+    const { data: updatedProfile, error: updateError } = await this.supabase
+      .from('profile')
+      .update({
+        full_name: updateData.fullName,
+      })
+      .eq('id', userId)
+      .select()
+      .single();
+
+    if (updateError) throw new Error(updateError.message);
 
     return {
-      id: profile.id,
-      email: profile.email,
-      fullName: profile.fullName,
-      role: profile.role,
-      updatedAt: profile.updatedAt,
+      id: updatedProfile.id,
+      email: updatedProfile.email,
+      fullName: updatedProfile.full_name,
+      role: updatedProfile.role,
+      updatedAt: updatedProfile.updated_at,
     };
   }
   
@@ -392,7 +458,11 @@ export class AuthService {
     }
     
     // Get all users from local database
-    const dbUsers = await this.prisma.profile.findMany();
+    const { data: dbUsers, error: dbError } = await this.supabase
+      .from('profile')
+      .select();
+
+    if (dbError) throw new Error(dbError.message);
     
     // Map users by email for easier comparison
     const supabaseUsersByEmail = {};
@@ -436,14 +506,16 @@ export class AuthService {
         this.logger.log(`Creating local profile for Supabase user: ${email}`);
         
         try {
-          await this.prisma.profile.create({
-            data: {
+          const { error: createError } = await this.supabase
+            .from('profile')
+            .insert([{
               id: supabaseUser.id,
               email: supabaseUser.email,
-              fullName: supabaseUser.user_metadata?.full_name || 'Unknown',
+              full_name: supabaseUser.user_metadata?.full_name || 'Unknown',
               role: 'USER',
-            },
-          });
+            }]);
+            
+          if (createError) throw createError;
           this.logger.log(`Created local profile for ${email}`);
         } catch (error) {
           this.logger.error(`Failed to create local profile for ${email}:`, error);
@@ -455,9 +527,12 @@ export class AuthService {
         this.logger.log(`Deleting local profile without Supabase user: ${email}`);
         
         try {
-          await this.prisma.profile.delete({
-            where: { email },
-          });
+          const { error: deleteError } = await this.supabase
+            .from('profile')
+            .delete()
+            .eq('email', email);
+            
+          if (deleteError) throw deleteError;
           this.logger.log(`Deleted local profile for ${email}`);
         } catch (error) {
           this.logger.error(`Failed to delete local profile for ${email}:`, error);

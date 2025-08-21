@@ -1,37 +1,41 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseConfig } from '../../config/supabase.config';
 import { CreateReviewDto, CreateReviewWithImagesDto, UpdateReviewDto, UpdateReviewWithImagesDto, ReviewResponseDto, ProductRatingStatsDto } from './dto/review.dto';
 import { PaginationDto } from '../../common/dto/common.dto';
 import { UploadService } from '../upload/upload.service';
 
 @Injectable()
 export class ReviewsService {
-  private prisma = new PrismaClient();
+  private supabase: SupabaseClient;
 
-  constructor(private readonly uploadService: UploadService) {}
+  constructor(private readonly uploadService: UploadService) {
+    this.supabase = SupabaseConfig.getInstance();
+  }
 
   async createReview(userId: string, createReviewDto: CreateReviewDto): Promise<ReviewResponseDto> {
     const { productId, orderId, rating, title, comment, images } = createReviewDto;
 
     // Check if product exists
-    const product = await this.prisma.product.findUnique({
-      where: { id: productId, isActive: true },
-    });
+    const { data: product } = await this.supabase
+      .from('product')
+      .select('*')
+      .eq('id', productId)
+      .eq('isActive', true)
+      .single();
 
     if (!product) {
       throw new NotFoundException('Product not found');
     }
 
     // Check if user has already reviewed this product
-    const existingReview = await this.prisma.productReview.findUnique({
-      where: {
-        userId_productId_orderId: {
-          userId,
-          productId,
-          orderId: orderId || null,
-        },
-      },
-    });
+    const { data: existingReview } = await this.supabase
+      .from('productReview')
+      .select('*')
+      .eq('userId', userId)
+      .eq('productId', productId)
+      .eq('orderId', orderId || null)
+      .single();
 
     if (existingReview) {
       throw new BadRequestException('You have already reviewed this product');
@@ -40,26 +44,31 @@ export class ReviewsService {
     // If orderId is provided, verify the user bought this product
     let isVerified = false;
     if (orderId) {
-      const order = await this.prisma.orders.findFirst({
-        where: {
-          id: orderId,
-          userId,
-          status: { in: ['PAID', 'COMPLETED'] },
-          orderItems: {
-            some: { productId },
-          },
-        },
-      });
+      const { data: orderItems } = await this.supabase
+        .from('orderItems')
+        .select('orders!inner(*)')
+        .eq('orders.id', orderId)
+        .eq('orders.userId', userId)
+        .in('orders.status', ['PAID', 'COMPLETED'])
+        .eq('productId', productId)
+        .single();
 
-      if (order) {
+      if (orderItems) {
         isVerified = true;
       } else {
         throw new BadRequestException('You can only review products you have purchased');
       }
     }
 
-    const review = await this.prisma.productReview.create({
-      data: {
+    const { data: user } = await this.supabase
+      .from('users')
+      .select('id, fullName, avatar')
+      .eq('id', userId)
+      .single();
+
+    const { data: review } = await this.supabase
+      .from('productReview')
+      .insert([{
         userId,
         productId,
         orderId,
@@ -68,17 +77,9 @@ export class ReviewsService {
         comment,
         images: images || [],
         isVerified,
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            fullName: true,
-            avatar: true,
-          },
-        },
-      },
-    });
+      }])
+      .select('*, user:users(id, fullName, avatar)')
+      .single();
 
     // Update product rating
     await this.updateProductRating(productId);
@@ -90,24 +91,25 @@ export class ReviewsService {
     const { productId, orderId, rating, title, comment } = createReviewDto;
 
     // Check if product exists
-    const product = await this.prisma.product.findUnique({
-      where: { id: productId, isActive: true },
-    });
+    const { data: product } = await this.supabase
+      .from('product')
+      .select('*')
+      .eq('id', productId)
+      .eq('isActive', true)
+      .single();
 
     if (!product) {
       throw new NotFoundException('Product not found');
     }
 
     // Check if user has already reviewed this product
-    const existingReview = await this.prisma.productReview.findUnique({
-      where: {
-        userId_productId_orderId: {
-          userId,
-          productId,
-          orderId: orderId || null,
-        },
-      },
-    });
+    const { data: existingReview } = await this.supabase
+      .from('productReview')
+      .select('*')
+      .eq('userId', userId)
+      .eq('productId', productId)
+      .eq('orderId', orderId || null)
+      .single();
 
     if (existingReview) {
       throw new BadRequestException('You have already reviewed this product');
@@ -123,26 +125,25 @@ export class ReviewsService {
     // If orderId is provided, verify the user bought this product
     let isVerified = false;
     if (orderId) {
-      const order = await this.prisma.orders.findFirst({
-        where: {
-          id: orderId,
-          userId,
-          status: { in: ['PAID', 'COMPLETED'] },
-          orderItems: {
-            some: { productId },
-          },
-        },
-      });
+      const { data: orderItems } = await this.supabase
+        .from('orderItems')
+        .select('orders!inner(*)')
+        .eq('orders.id', orderId)
+        .eq('orders.userId', userId)
+        .in('orders.status', ['PAID', 'COMPLETED'])
+        .eq('productId', productId)
+        .single();
 
-      if (order) {
+      if (orderItems) {
         isVerified = true;
       } else {
         throw new BadRequestException('You can only review products you have purchased');
       }
     }
 
-    const review = await this.prisma.productReview.create({
-      data: {
+    const { data: review } = await this.supabase
+      .from('productReview')
+      .insert([{
         userId,
         productId,
         orderId,
@@ -151,17 +152,9 @@ export class ReviewsService {
         comment,
         images: imageUrls,
         isVerified,
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            fullName: true,
-            avatar: true,
-          },
-        },
-      },
-    });
+      }])
+      .select('*, user:users(id, fullName, avatar)')
+      .single();
 
     // Update product rating
     await this.updateProductRating(productId);
@@ -174,36 +167,23 @@ export class ReviewsService {
     paginationDto: PaginationDto,
   ): Promise<{ reviews: ReviewResponseDto[]; total: number }> {
     const { page = 1, limit = 10 } = paginationDto;
-    const skip = (page - 1) * limit;
+    const start = (page - 1) * limit;
+    const end = start + limit - 1;
 
-    const [reviews, total] = await Promise.all([
-      this.prisma.productReview.findMany({
-        where: {
-          productId,
-          isVisible: true,
-        },
-        include: {
-          user: {
-            select: {
-              id: true,
-              fullName: true,
-              avatar: true,
-            },
-          },
-        },
-        orderBy: [
-          { isVerified: 'desc' },
-          { createdAt: 'desc' },
-        ],
-        skip,
-        take: limit,
-      }),
-      this.prisma.productReview.count({
-        where: {
-          productId,
-          isVisible: true,
-        },
-      }),
+    const [{ data: reviews, count }, { count: total }] = await Promise.all([
+      this.supabase
+        .from('productReview')
+        .select('*, user:users(id, fullName, avatar)', { count: 'exact' })
+        .eq('productId', productId)
+        .eq('isVisible', true)
+        .order('isVerified', { ascending: false })
+        .order('createdAt', { ascending: false })
+        .range(start, end),
+      this.supabase
+        .from('productReview')
+        .select('id', { count: 'exact', head: true })
+        .eq('productId', productId)
+        .eq('isVisible', true)
     ]);
 
     return {
@@ -217,27 +197,20 @@ export class ReviewsService {
     paginationDto: PaginationDto,
   ): Promise<{ reviews: ReviewResponseDto[]; total: number }> {
     const { page = 1, limit = 10 } = paginationDto;
-    const skip = (page - 1) * limit;
+    const start = (page - 1) * limit;
+    const end = start + limit - 1;
 
-    const [reviews, total] = await Promise.all([
-      this.prisma.productReview.findMany({
-        where: { userId },
-        include: {
-          user: {
-            select: {
-              id: true,
-              fullName: true,
-              avatar: true,
-            },
-          },
-        },
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take: limit,
-      }),
-      this.prisma.productReview.count({
-        where: { userId },
-      }),
+    const [{ data: reviews, count }, { count: total }] = await Promise.all([
+      this.supabase
+        .from('productReview')
+        .select('*, user:users(id, fullName, avatar)', { count: 'exact' })
+        .eq('userId', userId)
+        .order('createdAt', { ascending: false })
+        .range(start, end),
+      this.supabase
+        .from('productReview')
+        .select('id', { count: 'exact', head: true })
+        .eq('userId', userId)
     ]);
 
     return {
@@ -251,9 +224,11 @@ export class ReviewsService {
     reviewId: string,
     updateReviewDto: UpdateReviewDto,
   ): Promise<ReviewResponseDto> {
-    const existingReview = await this.prisma.productReview.findUnique({
-      where: { id: reviewId },
-    });
+    const { data: existingReview } = await this.supabase
+      .from('productReview')
+      .select('*')
+      .eq('id', reviewId)
+      .single();
 
     if (!existingReview) {
       throw new NotFoundException('Review not found');
@@ -263,24 +238,17 @@ export class ReviewsService {
       throw new ForbiddenException('You can only update your own reviews');
     }
 
-    const updatedReview = await this.prisma.productReview.update({
-      where: { id: reviewId },
-      data: {
+    const { data: updatedReview } = await this.supabase
+      .from('productReview')
+      .update({
         rating: updateReviewDto.rating,
         title: updateReviewDto.title,
         comment: updateReviewDto.comment,
         images: updateReviewDto.images,
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            fullName: true,
-            avatar: true,
-          },
-        },
-      },
-    });
+      })
+      .eq('id', reviewId)
+      .select('*, user:users(id, fullName, avatar)')
+      .single();
 
     // Update product rating if rating changed
     if (updateReviewDto.rating !== undefined) {
@@ -291,9 +259,11 @@ export class ReviewsService {
   }
 
   async deleteReview(userId: string, reviewId: string): Promise<void> {
-    const existingReview = await this.prisma.productReview.findUnique({
-      where: { id: reviewId },
-    });
+    const { data: existingReview } = await this.supabase
+      .from('productReview')
+      .select('*')
+      .eq('id', reviewId)
+      .single();
 
     if (!existingReview) {
       throw new NotFoundException('Review not found');
@@ -303,22 +273,35 @@ export class ReviewsService {
       throw new ForbiddenException('You can only delete your own reviews');
     }
 
-    await this.prisma.productReview.delete({
-      where: { id: reviewId },
-    });
+    await this.supabase
+      .from('productReview')
+      .delete()
+      .eq('id', reviewId);
 
     // Update product rating
     await this.updateProductRating(existingReview.productId);
   }
 
   async getProductRatingStats(productId: string): Promise<ProductRatingStatsDto> {
-    const reviews = await this.prisma.productReview.findMany({
-      where: {
-        productId,
-        isVisible: true,
-      },
-      select: { rating: true },
-    });
+    const { data: reviews } = await this.supabase
+      .from('productReview')
+      .select('rating')
+      .eq('productId', productId)
+      .eq('isVisible', true);
+
+    if (!reviews) {
+      return {
+        averageRating: 0,
+        totalReviews: 0,
+        ratingDistribution: {
+          5: 0,
+          4: 0,
+          3: 0,
+          2: 0,
+          1: 0,
+        },
+      };
+    }
 
     const totalReviews = reviews.length;
     const averageRating = totalReviews > 0 
@@ -343,13 +326,13 @@ export class ReviewsService {
   private async updateProductRating(productId: string): Promise<void> {
     const stats = await this.getProductRatingStats(productId);
 
-    await this.prisma.product.update({
-      where: { id: productId },
-      data: {
+    await this.supabase
+      .from('product')
+      .update({
         avgRating: stats.averageRating,
         reviewCount: stats.totalReviews,
-      },
-    });
+      })
+      .eq('id', productId);
   }
 
   private mapToResponseDto(review: any): ReviewResponseDto {

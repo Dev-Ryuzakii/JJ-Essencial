@@ -1,31 +1,34 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { DatabaseConfig } from '../../config/database.config';
-import { PrismaClient } from '@prisma/client';
+import { SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseConfig } from '../../config/supabase.config';
 import { BankAccountDto } from '../payments/dto/payment.dto';
 
 @Injectable()
 export class BankAccountService {
   private readonly logger = new Logger(BankAccountService.name);
-  private prisma: PrismaClient;
+  private supabase: SupabaseClient;
 
   constructor(private configService: ConfigService) {
-    this.prisma = DatabaseConfig.getInstance(this.configService);
+    this.supabase = SupabaseConfig.getInstance(this.configService);
   }
 
   async getActiveBankAccounts(): Promise<BankAccountDto[]> {
     try {
-      const accounts = await this.prisma.bankAccount.findMany({
-        where: { isActive: true },
-        orderBy: { createdAt: 'asc' },
-      });
+      const { data: accounts, error } = await this.supabase
+        .from('bank_account')
+        .select('*')
+        .eq('is_active', true)
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
 
       return accounts.map(account => ({
-        bankName: account.bankName,
-        accountName: account.accountName,
-        accountNumber: account.accountNumber,
-        sortCode: account.sortCode || undefined,
-        swiftCode: account.swiftCode || undefined,
+        bankName: account.bank_name,
+        accountName: account.account_name,
+        accountNumber: account.account_number,
+        sortCode: account.sort_code || undefined,
+        swiftCode: account.swift_code || undefined,
         currency: account.currency,
       }));
     } catch (error) {
@@ -36,18 +39,23 @@ export class BankAccountService {
 
   async createBankAccount(accountData: BankAccountDto): Promise<any> {
     try {
-      const account = await this.prisma.bankAccount.create({
-        data: {
-          bankName: accountData.bankName,
-          accountName: accountData.accountName,
-          accountNumber: accountData.accountNumber,
-          sortCode: accountData.sortCode,
-          swiftCode: accountData.swiftCode,
+      const { data: account, error } = await this.supabase
+        .from('bank_account')
+        .insert({
+          bank_name: accountData.bankName,
+          account_name: accountData.accountName,
+          account_number: accountData.accountNumber,
+          sort_code: accountData.sortCode,
+          swift_code: accountData.swiftCode,
           currency: accountData.currency || 'NGN',
-        },
-      });
+          is_active: true,
+        })
+        .select()
+        .single();
 
-      this.logger.log(`Bank account created: ${account.accountName} - ${account.accountNumber}`);
+      if (error) throw error;
+
+      this.logger.log(`Bank account created: ${account.account_name} - ${account.account_number}`);
       return account;
     } catch (error) {
       this.logger.error('Failed to create bank account:', error);
@@ -57,51 +65,72 @@ export class BankAccountService {
 
   async updateBankAccount(id: string, accountData: Partial<BankAccountDto>): Promise<any> {
     try {
-      const account = await this.prisma.bankAccount.update({
-        where: { id },
-        data: {
-          ...(accountData.bankName && { bankName: accountData.bankName }),
-          ...(accountData.accountName && { accountName: accountData.accountName }),
-          ...(accountData.accountNumber && { accountNumber: accountData.accountNumber }),
-          ...(accountData.sortCode && { sortCode: accountData.sortCode }),
-          ...(accountData.swiftCode && { swiftCode: accountData.swiftCode }),
-          ...(accountData.currency && { currency: accountData.currency }),
-        },
-      });
+      const updateData = {
+        ...(accountData.bankName && { bank_name: accountData.bankName }),
+        ...(accountData.accountName && { account_name: accountData.accountName }),
+        ...(accountData.accountNumber && { account_number: accountData.accountNumber }),
+        ...(accountData.sortCode && { sort_code: accountData.sortCode }),
+        ...(accountData.swiftCode && { swift_code: accountData.swiftCode }),
+        ...(accountData.currency && { currency: accountData.currency }),
+      };
+
+      const { data: account, error } = await this.supabase
+        .from('bank_account')
+        .update(updateData)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      if (!account) throw new NotFoundException('Bank account not found');
 
       this.logger.log(`Bank account updated: ${id}`);
       return account;
     } catch (error) {
       this.logger.error('Failed to update bank account:', error);
+      if (error instanceof NotFoundException) throw error;
       throw new NotFoundException('Bank account not found');
     }
   }
 
   async toggleBankAccountStatus(id: string): Promise<any> {
     try {
-      const account = await this.prisma.bankAccount.findUnique({ where: { id } });
-      if (!account) {
-        throw new NotFoundException('Bank account not found');
-      }
+      const { data: account, error: fetchError } = await this.supabase
+        .from('bank_account')
+        .select('is_active')
+        .eq('id', id)
+        .single();
 
-      const updatedAccount = await this.prisma.bankAccount.update({
-        where: { id },
-        data: { isActive: !account.isActive },
-      });
+      if (fetchError) throw fetchError;
+      if (!account) throw new NotFoundException('Bank account not found');
 
-      this.logger.log(`Bank account ${id} status changed to: ${updatedAccount.isActive ? 'active' : 'inactive'}`);
+      const { data: updatedAccount, error: updateError } = await this.supabase
+        .from('bank_account')
+        .update({ is_active: !account.is_active })
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (updateError) throw updateError;
+
+      this.logger.log(`Bank account ${id} status changed to: ${updatedAccount.is_active ? 'active' : 'inactive'}`);
       return updatedAccount;
     } catch (error) {
       this.logger.error('Failed to toggle bank account status:', error);
-      throw error;
+      if (error instanceof NotFoundException) throw error;
+      throw new Error('Failed to toggle bank account status');
     }
   }
 
   async getAllBankAccounts(): Promise<any[]> {
     try {
-      return await this.prisma.bankAccount.findMany({
-        orderBy: { createdAt: 'desc' },
-      });
+      const { data: accounts, error } = await this.supabase
+        .from('bank_account')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return accounts;
     } catch (error) {
       this.logger.error('Failed to get all bank accounts:', error);
       throw error;

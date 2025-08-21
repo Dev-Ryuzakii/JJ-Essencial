@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
-import { DatabaseConfig } from '../../config/database.config';
+import { SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseConfig } from '../../config/supabase.config';
 
 export interface SearchFilters {
   query?: string;
@@ -38,10 +38,10 @@ export interface SearchFacets {
 @Injectable()
 export class SearchService {
   private readonly logger = new Logger(SearchService.name);
-  private prisma: PrismaClient;
+  private supabase: SupabaseClient;
 
   constructor(private configService: ConfigService) {
-    this.prisma = DatabaseConfig.getInstance(configService);
+    this.supabase = SupabaseConfig.getInstance(this.configService);
   }
 
   async searchProducts(filters: SearchFilters): Promise<SearchResult<any>> {
@@ -143,28 +143,47 @@ export class SearchService {
     }
 
     try {
-      // Get total count
-      const total = await this.prisma.product.count({ where });
+      let query = this.supabase
+        .from('product')
+        .select('*', { count: 'exact' });
 
-      // Get products
-      const products = await this.prisma.product.findMany({
-        where,
-        orderBy,
-        skip: (page - 1) * limit,
-        take: limit,
-        select: {
-          id: true,
-          name: true,
-          description: true,
-          price: true,
-          stock: true,
-          images: true,
-          category: true,
-          isActive: true,
-          createdAt: true,
-          updatedAt: true,
-        },
-      });
+      // Apply filters
+      if (where.OR) {
+        query = query.or(
+          where.OR.map(condition => {
+            const field = Object.keys(condition)[0];
+            return `${field}.ilike.%${condition[field].contains}%`;
+          }).join(',')
+        );
+      }
+
+      if (category) {
+        query = query.ilike('category', category);
+      }
+
+      if (where.price) {
+        if (where.price.gte) query = query.gte('price', where.price.gte);
+        if (where.price.lte) query = query.lte('price', where.price.lte);
+      }
+
+      if (inStock !== undefined) {
+        query = query.gte('stock', inStock ? 1 : 0);
+      }
+
+      // Count total before pagination
+      const { count } = await query;
+      const total = count || 0;
+
+      // Apply sorting and pagination
+      query = query
+        .order(Object.keys(orderBy)[0], {
+          ascending: Object.values(orderBy)[0] === 'asc',
+        })
+        .range((page - 1) * limit, page * limit - 1);
+
+      const { data: products, error } = await query;
+
+      if (error) throw error;
 
       // Format response
       const totalPages = Math.ceil(total / limit);
@@ -200,30 +219,14 @@ export class SearchService {
 
     try {
       // Get product names that match the query
-      const products = await this.prisma.product.findMany({
-        where: {
-          OR: [
-            {
-              name: {
-                contains: query,
-                mode: 'insensitive',
-              },
-            },
-            {
-              category: {
-                contains: query,
-                mode: 'insensitive',
-              },
-            },
-          ],
-          isActive: true,
-        },
-        select: {
-          name: true,
-          category: true,
-        },
-        take: limit,
-      });
+      const { data: products, error } = await this.supabase
+        .from('product')
+        .select('name, category')
+        .or(`name.ilike.%${query}%,category.ilike.%${query}%`)
+        .eq('is_active', true)
+        .limit(limit);
+
+      if (error) throw error;
 
       // Extract unique suggestions
       const suggestions = new Set<string>();
@@ -268,29 +271,16 @@ export class SearchService {
     try {
       // Get products ordered by creation date (newest first) as a proxy for trending
       // In a real app, you might track views, orders, etc.
-      const products = await this.prisma.product.findMany({
-        where: {
-          isActive: true,
-          stock: {
-            gt: 0,
-          },
-        },
-        orderBy: [
-          { createdAt: 'desc' },
-          { updatedAt: 'desc' },
-        ],
-        take: limit,
-        select: {
-          id: true,
-          name: true,
-          description: true,
-          price: true,
-          stock: true,
-          images: true,
-          category: true,
-          createdAt: true,
-        },
-      });
+      const { data: products, error } = await this.supabase
+        .from('product')
+        .select('id, name, description, price, stock, images, category, created_at')
+        .eq('is_active', true)
+        .gt('stock', 0)
+        .order('created_at', { ascending: false })
+        .order('updated_at', { ascending: false })
+        .limit(limit);
+
+      if (error) throw error;
 
       return products.map(product => ({
         ...product,
@@ -305,37 +295,35 @@ export class SearchService {
   private async getSearchFacets(filters: SearchFilters): Promise<SearchFacets> {
     try {
       // Get category facets
-      const categories = await this.prisma.product.groupBy({
-        by: ['category'],
-        where: {
-          isActive: true,
-          ...(filters.query && {
-            OR: [
-              { name: { contains: filters.query, mode: 'insensitive' } },
-              { description: { contains: filters.query, mode: 'insensitive' } },
-            ],
-          }),
-        },
-        _count: {
-          category: true,
-        },
-        orderBy: {
-          _count: {
-            category: 'desc',
-          },
-        },
-      });
+      let query = this.supabase
+        .from('product')
+        .select('category')
+        .eq('is_active', true)
+
+      if (filters.query) {
+        query = query.or(
+          `name.ilike.%${filters.query}%,description.ilike.%${filters.query}%`
+        );
+      }
+
+      const { data: categories, error } = await query;
+      if (error) throw error;
 
       // Get price range facets
       const priceRanges = await this.getPriceRangeFacets(filters);
 
       return {
-        categories: categories
-          .filter(cat => cat.category)
-          .map(cat => ({
-            name: cat.category!,
-            count: cat._count.category,
-          })),
+        categories: categories.reduce((acc, product) => {
+          if (product.category) {
+            const existing = acc.find(c => c.name === product.category);
+            if (existing) {
+              existing.count++;
+            } else {
+              acc.push({ name: product.category, count: 1 });
+            }
+          }
+          return acc;
+        }, [] as { name: string; count: number }[]),
         priceRanges,
         brands: [], // Could be implemented if you have brand field
         ratings: [], // Could be implemented if you have rating system
@@ -377,9 +365,25 @@ export class SearchService {
         },
       };
 
-      const count = await this.prisma.product.count({ where });
+      let query = this.supabase
+        .from('product')
+        .select('*', { count: 'exact' })
+        .eq('is_active', true)
+        .gte('price', range.min);
 
-      if (count > 0) {
+      if (range.max) {
+        query = query.lte('price', range.max);
+      }
+
+      if (filters.query) {
+        query = query.or(
+          `name.ilike.%${filters.query}%,description.ilike.%${filters.query}%`
+        );
+      }
+
+      const { count } = await query;
+
+      if (count && count > 0) {
         facets.push({
           range: range.label,
           count,
@@ -400,42 +404,33 @@ export class SearchService {
   async searchSimilarProducts(productId: string, limit: number = 5): Promise<any[]> {
     try {
       // Get the original product
-      const originalProduct = await this.prisma.product.findUnique({
-        where: { id: productId },
-        select: { category: true, price: true },
-      });
+      const { data: originalProduct, error: originalError } = await this.supabase
+        .from('product')
+        .select('category, price')
+        .eq('id', productId)
+        .single();
 
-      if (!originalProduct) {
+      if (originalError || !originalProduct) {
         return [];
       }
 
       // Find similar products in the same category with similar price range
       const priceRange = parseFloat(originalProduct.price.toString()) * 0.3; // 30% price range
+      const minPrice = parseFloat(originalProduct.price.toString()) - priceRange;
+      const maxPrice = parseFloat(originalProduct.price.toString()) + priceRange;
 
-      const similarProducts = await this.prisma.product.findMany({
-        where: {
-          id: { not: productId },
-          isActive: true,
-          category: originalProduct.category,
-          price: {
-            gte: parseFloat(originalProduct.price.toString()) - priceRange,
-            lte: parseFloat(originalProduct.price.toString()) + priceRange,
-          },
-        },
-        take: limit,
-        select: {
-          id: true,
-          name: true,
-          description: true,
-          price: true,
-          stock: true,
-          images: true,
-          category: true,
-        },
-        orderBy: {
-          createdAt: 'desc',
-        },
-      });
+      const { data: similarProducts, error } = await this.supabase
+        .from('product')
+        .select('id, name, description, price, stock, images, category')
+        .neq('id', productId)
+        .eq('is_active', true)
+        .eq('category', originalProduct.category)
+        .gte('price', minPrice)
+        .lte('price', maxPrice)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (error) throw error;
 
       return similarProducts.map(product => ({
         ...product,

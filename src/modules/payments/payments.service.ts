@@ -1,7 +1,7 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PrismaClient } from '@prisma/client';
-import { DatabaseConfig } from '../../config/database.config';
+import { SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseConfig } from '../../config/supabase.config';
 import { InitiatePaymentDto, VerifyPaymentDto, BankTransferResponseDto, UploadReceiptDto, VerifyReceiptDto, PaymentReceiptDto } from './dto/payment.dto';
 import { BankAccountService } from './bank-account.service';
 import { EmailService } from '../email/email.service';
@@ -10,32 +10,29 @@ import * as crypto from 'crypto';
 
 @Injectable()
 export class PaymentsService {
-  private prisma: PrismaClient;
+  private supabase: SupabaseClient;
 
   constructor(
     private configService: ConfigService,
     private bankAccountService: BankAccountService,
     private emailService: EmailService,
   ) {
-    this.prisma = DatabaseConfig.getInstance();
+    this.supabase = SupabaseConfig.getInstance();
   }
 
   async initiatePayment(userId: string, initiatePaymentDto: InitiatePaymentDto) {
     const { orderId, gateway } = initiatePaymentDto;
 
     // Get order details
-    const order = await this.prisma.orders.findFirst({
-      where: {
-        id: orderId,
-        userId,
-        status: 'PENDING',
-      },
-      include: {
-        user: true,
-      },
-    });
+    const { data: order, error: orderError } = await this.supabase
+      .from('orders')
+      .select('*, user:users(*)')
+      .eq('id', orderId)
+      .eq('userId', userId)
+      .eq('status', 'PENDING')
+      .single();
 
-    if (!order) {
+    if (!order || orderError) {
       throw new NotFoundException('Order not found or already processed');
     }
 
@@ -43,15 +40,21 @@ export class PaymentsService {
     const reference = `${gateway.toLowerCase()}_${Date.now()}_${orderId.slice(0, 8)}`;
 
     // Create payment transaction record
-    const transaction = await this.prisma.paymentTransaction.create({
-      data: {
+    const { data: transaction, error: transactionError } = await this.supabase
+      .from('paymentTransaction')
+      .insert([{
         orderId,
         reference,
         amount: order.totalAmount,
         gateway,
         status: gateway === 'BANK_TRANSFER' ? 'AWAITING_VERIFICATION' : 'PENDING',
-      },
-    });
+      }])
+      .select()
+      .single();
+
+    if (!transaction || transactionError) {
+      throw new Error('Failed to create payment transaction');
+    }
 
     let paymentData;
     
@@ -160,18 +163,19 @@ export class PaymentsService {
     const { reference, gateway } = verifyPaymentDto;
 
     // Get transaction record
-    const transaction = await this.prisma.paymentTransaction.findUnique({
-      where: { reference },
-      include: {
-        order: {
-          include: {
-            user: true,
-          },
-        },
-      },
-    });
+    const { data: transaction, error: transactionError } = await this.supabase
+      .from('paymentTransaction')
+      .select(`
+        *,
+        order:orders (
+          *,
+          user:users (*)
+        )
+      `)
+      .eq('reference', reference)
+      .single();
 
-    if (!transaction) {
+    if (!transaction || transactionError) {
       throw new NotFoundException('Transaction not found');
     }
 
@@ -184,24 +188,31 @@ export class PaymentsService {
     }
 
     if (verificationResult.success) {
-      // Update transaction and order status
-      await this.prisma.$transaction(async (tx) => {
-        await tx.paymentTransaction.update({
-          where: { reference },
-          data: {
-            status: 'PAID',
-            gatewayData: verificationResult.data,
-          },
-        });
+      // Update transaction
+      const { error: updateTransactionError } = await this.supabase
+        .from('paymentTransaction')
+        .update({
+          status: 'PAID',
+          gatewayData: verificationResult.data,
+        })
+        .eq('reference', reference);
 
-        await tx.orders.update({
-          where: { id: transaction.orderId },
-          data: {
-            status: 'PAID',
-            paymentRef: reference,
-          },
-        });
-      });
+      if (updateTransactionError) {
+        throw new Error('Failed to update transaction status');
+      }
+
+      // Update order
+      const { error: updateOrderError } = await this.supabase
+        .from('orders')
+        .update({
+          status: 'PAID',
+          paymentRef: reference,
+        })
+        .eq('id', transaction.orderId);
+
+      if (updateOrderError) {
+        throw new Error('Failed to update order status');
+      }
     }
 
     return verificationResult;
@@ -306,60 +317,70 @@ export class PaymentsService {
   }
 
   private async processSuccessfulPayment(reference: string, gateway: string, gatewayData: any) {
-    const transaction = await this.prisma.paymentTransaction.findUnique({
-      where: { reference },
-    });
+    const { data: transaction, error: transactionError } = await this.supabase
+      .from('paymentTransaction')
+      .select('*')
+      .eq('reference', reference)
+      .single();
 
-    if (!transaction || transaction.status === 'PAID') {
-      return; // Already processed
+    if (!transaction || transaction.status === 'PAID' || transactionError) {
+      return; // Already processed or error
     }
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.paymentTransaction.update({
-        where: { reference },
-        data: {
-          status: 'PAID',
-          gatewayData,
-        },
-      });
+    // Update transaction
+    const { error: updateTransactionError } = await this.supabase
+      .from('paymentTransaction')
+      .update({
+        status: 'PAID',
+        gatewayData,
+      })
+      .eq('reference', reference);
 
-      await tx.orders.update({
-        where: { id: transaction.orderId },
-        data: {
-          status: 'PAID',
-          paymentRef: reference,
-        },
-      });
-    });
+    if (updateTransactionError) {
+      throw new Error('Failed to update transaction status');
+    }
+
+    // Update order
+    const { error: updateOrderError } = await this.supabase
+      .from('orders')
+      .update({
+        status: 'PAID',
+        paymentRef: reference,
+      })
+      .eq('id', transaction.orderId);
+
+    if (updateOrderError) {
+      throw new Error('Failed to update order status');
+    }
   }
 
   async getPaymentHistory(userId?: string) {
-    const where = userId ? { 
-      order: { 
-        userId: userId 
-      } 
-    } : {};
+    let query = this.supabase
+      .from('paymentTransaction')
+      .select(`
+        *,
+        order:orders (
+          id,
+          status,
+          user:users (
+            email,
+            fullName
+          )
+        )
+      `)
+      .order('createdAt', { ascending: false });
 
-    const transactions = await this.prisma.paymentTransaction.findMany({
-      where,
-      include: {
-        order: {
-          include: {
-            user: {
-              select: {
-                email: true,
-                fullName: true,
-              },
-            },
-          },
-        },
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+    if (userId) {
+      query = query.eq('order.userId', userId);
+    }
 
-    return transactions.map(transaction => ({
+    const { data: transactions, error } = await query;
+
+    if (error) {
+      throw new Error('Failed to fetch payment history');
+    }
+
+    return (transactions || []).map(transaction => ({
       id: transaction.id,
       reference: transaction.reference,
       amount: parseFloat(transaction.amount.toString()),
@@ -378,14 +399,14 @@ export class PaymentsService {
   // Bank Transfer Methods
   async initiateBankTransfer(userId: string, orderId: string): Promise<BankTransferResponseDto> {
     // Find the order and verify ownership
-    const order = await this.prisma.orders.findFirst({
-      where: {
-        id: orderId,
-        userId: userId,
-      },
-    });
+    const { data: order, error: orderError } = await this.supabase
+      .from('orders')
+      .select('*')
+      .eq('id', orderId)
+      .eq('userId', userId)
+      .single();
 
-    if (!order) {
+    if (!order || orderError) {
       throw new NotFoundException('Order not found');
     }
 
@@ -448,18 +469,19 @@ export class PaymentsService {
     const { reference } = uploadReceiptDto;
 
     // Find the transaction
-    const transaction = await this.prisma.paymentTransaction.findUnique({
-      where: { reference },
-      include: {
-        order: {
-          include: {
-            user: true,
-          },
-        },
-      },
-    });
+    const { data: transaction, error: transactionError } = await this.supabase
+      .from('paymentTransaction')
+      .select(`
+        *,
+        order:orders (
+          *,
+          user:users (*)
+        )
+      `)
+      .eq('reference', reference)
+      .single();
 
-    if (!transaction) {
+    if (!transaction || transactionError) {
       throw new NotFoundException('Payment transaction not found');
     }
 
@@ -475,8 +497,9 @@ export class PaymentsService {
     // For now, we'll simulate the upload
     const receiptUrl = `uploads/receipts/${Date.now()}_${file.originalname}`;
 
-    const receipt = await this.prisma.paymentReceipt.create({
-      data: {
+    const { data: receipt, error: receiptError } = await this.supabase
+      .from('paymentReceipt')
+      .insert([{
         transactionId: transaction.id,
         receiptUrl,
         originalName: file.originalname,
@@ -484,17 +507,13 @@ export class PaymentsService {
         mimeType: file.mimetype,
         uploadedBy: userId,
         verificationStatus: 'PENDING',
-      },
-      include: {
-        uploader: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-          },
-        },
-      },
-    });
+      }])
+      .select('*, uploader:users(id, fullName, email)')
+      .single();
+
+    if (!receipt || receiptError) {
+      throw new Error('Failed to create payment receipt');
+    }
 
     // Notify admin
     try {
@@ -531,29 +550,27 @@ export class PaymentsService {
   ): Promise<PaymentReceiptDto> {
     const { receiptId, status, notes } = verifyReceiptDto;
 
-    const receipt = await this.prisma.paymentReceipt.findUnique({
-      where: { id: receiptId },
-      include: {
-        transaction: {
-          include: {
-            order: {
-              include: {
-                user: true,
-              },
-            },
-          },
-        },
-        uploader: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-          },
-        },
-      },
-    });
+    const { data: receipt, error: receiptError } = await this.supabase
+      .from('paymentReceipt')
+      .select(`
+        *,
+        transaction:paymentTransaction (
+          *,
+          order:orders (
+            *,
+            user:users (*)
+          )
+        ),
+        uploader:users (
+          id,
+          fullName,
+          email
+        )
+      `)
+      .eq('id', receiptId)
+      .single();
 
-    if (!receipt) {
+    if (!receipt || receiptError) {
       throw new NotFoundException('Payment receipt not found');
     }
 
@@ -562,35 +579,40 @@ export class PaymentsService {
     }
 
     // Update receipt
-    const updatedReceipt = await this.prisma.paymentReceipt.update({
-      where: { id: receiptId },
-      data: {
+    const { data: updatedReceipt, error: updateError } = await this.supabase
+      .from('paymentReceipt')
+      .update({
         verificationStatus: status,
         verifiedBy: adminId,
         verificationNotes: notes,
-      },
-      include: {
-        uploader: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-          },
-        },
-      },
-    });
+      })
+      .eq('id', receiptId)
+      .select('*, uploader:users(id, fullName, email)')
+      .single();
+
+    if (!updatedReceipt || updateError) {
+      throw new Error('Failed to update receipt');
+    }
 
     // If approved, update transaction and order status
     if (status === 'APPROVED') {
-      await this.prisma.paymentTransaction.update({
-        where: { id: receipt.transactionId },
-        data: { status: 'PAID' },
-      });
+      const { error: transactionError } = await this.supabase
+        .from('paymentTransaction')
+        .update({ status: 'PAID' })
+        .eq('id', receipt.transactionId);
 
-      await this.prisma.orders.update({
-        where: { id: receipt.transaction.orderId! },
-        data: { status: 'PAID' },
-      });
+      if (transactionError) {
+        throw new Error('Failed to update transaction status');
+      }
+
+      const { error: orderError } = await this.supabase
+        .from('orders')
+        .update({ status: 'PAID' })
+        .eq('id', receipt.transaction.orderId);
+
+      if (orderError) {
+        throw new Error('Failed to update order status');
+      }
 
       // Send payment confirmation email
       try {
@@ -639,30 +661,31 @@ export class PaymentsService {
   }
 
   async getPendingReceipts(): Promise<PaymentReceiptDto[]> {
-    const receipts = await this.prisma.paymentReceipt.findMany({
-      where: { verificationStatus: 'PENDING' },
-      include: {
-        transaction: {
-          include: {
-            order: {
-              include: {
-                user: true,
-              },
-            },
-          },
-        },
-        uploader: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-          },
-        },
-      },
-      orderBy: { createdAt: 'asc' },
-    });
+    const { data: receipts, error } = await this.supabase
+      .from('paymentReceipt')
+      .select(`
+        *,
+        transaction:paymentTransaction (
+          *,
+          order:orders (
+            *,
+            user:users (*)
+          )
+        ),
+        uploader:users (
+          id,
+          fullName,
+          email
+        )
+      `)
+      .eq('verificationStatus', 'PENDING')
+      .order('createdAt', { ascending: true });
 
-    return receipts.map(receipt => ({
+    if (error) {
+      throw new Error('Failed to fetch pending receipts');
+    }
+
+    return (receipts || []).map(receipt => ({
       id: receipt.id,
       receiptUrl: receipt.receiptUrl,
       originalName: receipt.originalName,
@@ -676,29 +699,29 @@ export class PaymentsService {
   }
 
   async getReceiptsByTransaction(reference: string): Promise<PaymentReceiptDto[]> {
-    const transaction = await this.prisma.paymentTransaction.findUnique({
-      where: { reference },
-    });
+    // First get the transaction
+    const { data: transaction, error: transactionError } = await this.supabase
+      .from('paymentTransaction')
+      .select('*')
+      .eq('reference', reference)
+      .single();
 
-    if (!transaction) {
+    if (!transaction || transactionError) {
       throw new NotFoundException('Transaction not found');
     }
 
-    const receipts = await this.prisma.paymentReceipt.findMany({
-      where: { transactionId: transaction.id },
-      include: {
-        uploader: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-          },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    // Then get all receipts for this transaction
+    const { data: receipts, error: receiptsError } = await this.supabase
+      .from('paymentReceipt')
+      .select('*, uploader:users(id, fullName, email)')
+      .eq('transactionId', transaction.id)
+      .order('createdAt', { ascending: false });
 
-    return receipts.map(receipt => ({
+    if (receiptsError) {
+      throw new Error('Failed to fetch receipts');
+    }
+
+    return (receipts || []).map(receipt => ({
       id: receipt.id,
       receiptUrl: receipt.receiptUrl,
       originalName: receipt.originalName,

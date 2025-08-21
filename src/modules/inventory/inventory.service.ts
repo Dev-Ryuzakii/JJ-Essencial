@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { ConfigService } from '@nestjs/config';
+import { SupabaseConfig } from '../../config/supabase.config';
 import { 
   StockMovementDto, 
   UpdateStockDto, 
@@ -11,7 +12,13 @@ import { PaginationDto } from '../../common/dto/common.dto';
 
 @Injectable()
 export class InventoryService {
-  private prisma = new PrismaClient();
+  private supabase;
+
+  constructor(
+    private readonly configService: ConfigService,
+  ) {
+    this.supabase = SupabaseConfig.getInstance(this.configService);
+  }
 
   async recordStockMovement(
     adminId: string,
@@ -19,9 +26,11 @@ export class InventoryService {
   ): Promise<StockMovementResponseDto> {
     const { productId, type, quantity, reason, reference } = stockMovementDto;
 
-    const product = await this.prisma.product.findUnique({
-      where: { id: productId },
-    });
+    const { data: product, error: productError } = await this.supabase
+      .from('product')
+      .select('*')
+      .eq('id', productId)
+      .single();
 
     if (!product) {
       throw new NotFoundException('Product not found');
@@ -49,41 +58,40 @@ export class InventoryService {
         throw new BadRequestException('Invalid movement type');
     }
 
-    // Record movement and update stock in transaction
-    const result = await this.prisma.$transaction(async (tx) => {
-      // Create stock movement record
-      const movement = await tx.stockMovement.create({
-        data: {
-          productId,
-          type,
-          quantity: type === StockMovementType.ADJUSTMENT ? quantity - previousStock : quantity,
-          previousStock,
-          newStock,
-          reason,
-          reference,
-          performedBy: adminId,
-        },
-        include: {
-          product: {
-            select: {
-              id: true,
-              name: true,
-              sku: true,
-            },
-          },
-        },
-      });
+    // Create stock movement record
+    const { data: movement, error: movementError } = await this.supabase
+      .from('stock_movement')
+      .insert([{
+        product_id: productId,
+        type,
+        quantity: type === StockMovementType.ADJUSTMENT ? quantity - previousStock : quantity,
+        previous_stock: previousStock,
+        new_stock: newStock,
+        reason,
+        reference,
+        performed_by: adminId,
+      }])
+      .select(`
+        *,
+        product:product_id (
+          id,
+          name,
+          sku
+        )
+      `)
+      .single();
 
-      // Update product stock
-      await tx.product.update({
-        where: { id: productId },
-        data: { stock: newStock },
-      });
+    if (movementError) throw new Error(movementError.message);
 
-      return movement;
-    });
+    // Update product stock
+    const { error: updateError } = await this.supabase
+      .from('product')
+      .update({ stock: newStock })
+      .eq('id', productId);
 
-    return this.mapToResponseDto(result);
+    if (updateError) throw new Error(updateError.message);
+
+    return this.mapToResponseDto(movement);
   }
 
   async updateProductStock(
@@ -93,9 +101,11 @@ export class InventoryService {
   ): Promise<StockMovementResponseDto> {
     const { stock, lowStockThreshold, reason } = updateStockDto;
 
-    const product = await this.prisma.product.findUnique({
-      where: { id: productId },
-    });
+    const { data: product, error: productError } = await this.supabase
+      .from('product')
+      .select('*')
+      .eq('id', productId)
+      .single();
 
     if (!product) {
       throw new NotFoundException('Product not found');
@@ -103,10 +113,12 @@ export class InventoryService {
 
     // Update low stock threshold if provided
     if (lowStockThreshold !== undefined) {
-      await this.prisma.product.update({
-        where: { id: productId },
-        data: { lowStockThreshold },
-      });
+      const { error: updateError } = await this.supabase
+        .from('product')
+        .update({ low_stock_threshold: lowStockThreshold })
+        .eq('id', productId);
+
+      if (updateError) throw new Error(updateError.message);
     }
 
     // Record stock adjustment
@@ -125,57 +137,49 @@ export class InventoryService {
     paginationDto?: PaginationDto,
   ): Promise<{ movements: StockMovementResponseDto[]; total: number }> {
     const { page = 1, limit = 20 } = paginationDto || {};
-    const skip = (page - 1) * limit;
+    const start = (page - 1) * limit;
+    const end = start + limit - 1;
 
-    const where = productId ? { productId } : {};
+    let query = this.supabase
+      .from('stock_movement')
+      .select(`
+        *,
+        product:product_id (
+          id,
+          name,
+          sku
+        )
+      `, { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(start, end);
 
-    const [movements, total] = await Promise.all([
-      this.prisma.stockMovement.findMany({
-        where,
-        include: {
-          product: {
-            select: {
-              id: true,
-              name: true,
-              sku: true,
-            },
-          },
-        },
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take: limit,
-      }),
-      this.prisma.stockMovement.count({ where }),
-    ]);
+    if (productId) {
+      query = query.eq('product_id', productId);
+    }
+
+    const { data: movements, count, error } = await query;
 
     return {
       movements: movements.map(movement => this.mapToResponseDto(movement)),
-      total,
+      total: count || 0,
     };
   }
 
   async getLowStockProducts(threshold?: number): Promise<LowStockProductDto[]> {
-    const products = await this.prisma.product.findMany({
-      where: {
-        isActive: true,
-        stock: {
-          lte: threshold ? threshold : { field: 'lowStockThreshold' } as any,
-        },
-      },
-      select: {
-        id: true,
-        name: true,
-        sku: true,
-        stock: true,
-        lowStockThreshold: true,
-        category: true,
-        price: true,
-      },
-      orderBy: [
-        { stock: 'asc' },
-        { name: 'asc' },
-      ],
-    });
+    const { data: products, error } = await this.supabase
+      .from('product')
+      .select(`
+        id,
+        name,
+        sku,
+        stock,
+        low_stock_threshold,
+        category,
+        price
+      `)
+      .eq('is_active', true)
+      .order('stock', { ascending: true })
+      .order('name', { ascending: true });
 
     return products
       .filter(product => product.stock <= product.lowStockThreshold)
@@ -191,42 +195,30 @@ export class InventoryService {
   }
 
   async getInventoryStats(): Promise<any> {
-    const [totalProducts, lowStockCount, outOfStockCount, totalValue] = await Promise.all([
-      this.prisma.product.count({
-        where: { isActive: true },
-      }),
-      this.prisma.product.count({
-        where: {
-          isActive: true,
-          stock: { lte: { field: 'lowStockThreshold' } as any },
-        },
-      }),
-      this.prisma.product.count({
-        where: {
-          isActive: true,
-          stock: 0,
-        },
-      }),
-      this.prisma.product.aggregate({
-        where: { isActive: true },
-        _sum: {
-          stock: true,
-        },
-      }),
-    ]);
+    // Get all active products
+    const { data: products, error: productsError } = await this.supabase
+      .from('product')
+      .select('*')
+      .eq('is_active', true);
+
+    if (productsError) throw new Error(productsError.message);
+
+    const totalProducts = products.length;
+    const lowStockCount = products.filter(p => p.stock <= p.low_stock_threshold).length;
+    const outOfStockCount = products.filter(p => p.stock === 0).length;
+    const totalValue = products.reduce((sum, p) => sum + (p.stock || 0), 0);
 
     // Get recent movements
-    const recentMovements = await this.prisma.stockMovement.findMany({
-      take: 10,
-      orderBy: { createdAt: 'desc' },
-      include: {
-        product: {
-          select: {
-            name: true,
-          },
-        },
-      },
-    });
+    const { data: recentMovements, error: movementsError } = await this.supabase
+      .from('stock_movement')
+      .select(`
+        *,
+        product:product_id (
+          name
+        )
+      `)
+      .order('created_at', { ascending: false })
+      .limit(10);
 
     return {
       totalProducts,
@@ -253,15 +245,15 @@ export class InventoryService {
   private mapToResponseDto(movement: any): StockMovementResponseDto {
     return {
       id: movement.id,
-      productId: movement.productId,
+      productId: movement.product_id,
       type: movement.type,
       quantity: movement.quantity,
-      previousStock: movement.previousStock,
-      newStock: movement.newStock,
+      previousStock: movement.previous_stock,
+      newStock: movement.new_stock,
       reason: movement.reason,
       reference: movement.reference,
-      performedBy: movement.performedBy,
-      createdAt: movement.createdAt,
+      performedBy: movement.performed_by,
+      createdAt: movement.created_at,
       product: {
         id: movement.product.id,
         name: movement.product.name,

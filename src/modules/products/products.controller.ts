@@ -106,7 +106,7 @@ export class ProductsController {
   @ApiResponse({ status: 200, description: 'Categories retrieved successfully' })
   async getCategories(): Promise<SuccessResponseDto<string[]>> {
     const result = await this.productsService.getCategories();
-    return new SuccessResponseDto(result, 'Categories retrieved successfully');
+    return new SuccessResponseDto(result as string[], 'Categories retrieved successfully');
   }
 
   @Get('low-stock')

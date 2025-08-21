@@ -15,6 +15,18 @@ async function bootstrap() {
   const configService = app.get(ConfigService);
   const logger = new Logger('Bootstrap');
 
+  // Validate Supabase configuration
+  const supabaseUrl = configService.get('supabase.url');
+  const supabaseKey = configService.get('supabase.serviceRoleKey');
+  if (!supabaseUrl || !supabaseKey) {
+    throw new Error('Supabase configuration is missing. Please check your environment variables.');
+  }
+
+  logger.log('Supabase configuration:', { 
+    url: supabaseUrl ? 'Found' : 'Missing',
+    key: supabaseKey ? 'Found' : 'Missing'
+  });
+
   // Get configuration
   const port = configService.get('app.port') || 3000;
   const apiPrefix = configService.get('app.apiPrefix') || 'api/v1';
@@ -50,7 +62,7 @@ async function bootstrap() {
   // Swagger API documentation
   const config = new DocumentBuilder()
     .setTitle('E-commerce Backend API')
-    .setDescription('Production-ready e-commerce backend with Supabase, Prisma, and payment gateways')
+    .setDescription('Production-ready e-commerce backend with Supabase and payment gateways')
     .setVersion('1.0')
     .addBearerAuth()
     .addTag('Authentication', 'User authentication and profile management')

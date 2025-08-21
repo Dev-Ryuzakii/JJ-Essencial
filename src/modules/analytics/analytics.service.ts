@@ -1,9 +1,14 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseConfig } from '../../config/supabase.config';
 
 @Injectable()
 export class AnalyticsService {
-  private prisma = new PrismaClient();
+  private supabase: SupabaseClient;
+
+  constructor() {
+    this.supabase = SupabaseConfig.getInstance();
+  }
 
   async getDashboardStats() {
     try {
@@ -24,42 +29,34 @@ export class AnalyticsService {
         recentReviews,
       ] = await Promise.all([
         // Total counts
-        this.prisma.product.count({ where: { isActive: true } }),
-        this.prisma.orders.count(),
-        this.prisma.profile.count({ where: { isActive: true } }),
+        this.supabase.from('product').select('*', { count: 'exact', head: true }).eq('isActive', true),
+        this.supabase.from('orders').select('*', { count: 'exact', head: true }),
+        this.supabase.from('profile').select('*', { count: 'exact', head: true }).eq('isActive', true),
 
         // Today's stats
-        this.prisma.orders.count({
-          where: { createdAt: { gte: yesterday } },
-        }),
+        this.supabase.from('orders').select('*', { count: 'exact', head: true })
+          .gte('createdAt', yesterday.toISOString()),
 
         // Weekly stats
-        this.prisma.orders.count({
-          where: { createdAt: { gte: sevenDaysAgo } },
-        }),
+        this.supabase.from('orders').select('*', { count: 'exact', head: true })
+          .gte('createdAt', sevenDaysAgo.toISOString()),
 
         // Monthly stats
-        this.prisma.orders.count({
-          where: { createdAt: { gte: thirtyDaysAgo } },
-        }),
+        this.supabase.from('orders').select('*', { count: 'exact', head: true })
+          .gte('createdAt', thirtyDaysAgo.toISOString()),
 
         // Low stock products
-        this.prisma.product.count({
-          where: {
-            isActive: true,
-            stock: { lte: 10 },
-          },
-        }),
+        this.supabase.from('product').select('*', { count: 'exact', head: true })
+          .eq('isActive', true)
+          .lte('stock', 10),
 
         // Pending orders
-        this.prisma.orders.count({
-          where: { status: 'PENDING' },
-        }),
+        this.supabase.from('orders').select('*', { count: 'exact', head: true })
+          .eq('status', 'PENDING'),
 
         // Recent reviews
-        this.prisma.productReview.count({
-          where: { createdAt: { gte: sevenDaysAgo } },
-        }),
+        this.supabase.from('productReview').select('*', { count: 'exact', head: true })
+          .gte('createdAt', sevenDaysAgo.toISOString()),
       ]);
 
       // Calculate revenues
@@ -125,14 +122,11 @@ export class AnalyticsService {
       const startDate = new Date();
       startDate.setDate(startDate.getDate() - days);
 
-      const orders = await this.prisma.orders.findMany({
-        where: {
-          createdAt: { gte: startDate },
-        },
-        orderBy: {
-          createdAt: 'asc',
-        },
-      });
+      const { data: orders } = await this.supabase
+        .from('orders')
+        .select('*')
+        .gte('createdAt', startDate.toISOString())
+        .order('createdAt', { ascending: true });
 
       const dailySalesMap = new Map();
       orders.forEach(order => {
@@ -154,23 +148,18 @@ export class AnalyticsService {
 
       const dailySales = Array.from(dailySalesMap.values());
 
-      const orderItems = await this.prisma.orderItem.findMany({
-        where: {
-          order: {
-            createdAt: { gte: startDate },
-          },
-        },
-        include: {
-          product: {
-            select: {
-              id: true,
-              name: true,
-              price: true,
-              images: true,
-            },
-          },
-        },
-      });
+      const { data: orderItems } = await this.supabase
+        .from('orderItem')
+        .select(`
+          *,
+          product:products (
+            id,
+            name,
+            price,
+            images
+          )
+        `)
+        .gte('order.createdAt', startDate.toISOString());
 
       const productMap = new Map();
       orderItems.forEach(item => {
@@ -195,11 +184,10 @@ export class AnalyticsService {
         .sort((a, b) => b.total_sold - a.total_sold)
         .slice(0, 10);
 
-      const categories = await this.prisma.category.findMany({
-        where: {
-          isActive: true,
-        },
-      });
+      const { data: categories } = await this.supabase
+        .from('category')
+        .select('*')
+        .eq('isActive', true);
 
       const salesByCategory = categories.map(category => ({
         category: category.name,
@@ -239,15 +227,10 @@ export class AnalyticsService {
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-      const recentProfiles = await this.prisma.profile.findMany({
-        where: {
-          createdAt: { gte: thirtyDaysAgo },
-        },
-        select: {
-          id: true,
-          createdAt: true,
-        },
-      });
+      const { data: recentProfiles } = await this.supabase
+        .from('profile')
+        .select('id, createdAt')
+        .gte('createdAt', thirtyDaysAgo.toISOString());
 
       const monthlySignupsMap = new Map();
       recentProfiles.forEach(profile => {
@@ -267,23 +250,19 @@ export class AnalyticsService {
 
       const monthlySignups = Array.from(monthlySignupsMap.values());
 
-      const profiles = await this.prisma.profile.findMany({
-        where: {
-          isActive: true,
-        },
-        select: {
-          id: true,
-          fullName: true,
-          email: true,
-          orders: {
-            select: {
-              id: true,
-              totalAmount: true,
-              createdAt: true,
-            },
-          },
-        },
-      });
+      const { data: profiles } = await this.supabase
+        .from('profile')
+        .select(`
+          id,
+          fullName,
+          email,
+          orders (
+            id,
+            totalAmount,
+            createdAt
+          )
+        `)
+        .eq('isActive', true);
 
       const topCustomers = profiles
         .map(profile => {
@@ -333,18 +312,11 @@ export class AnalyticsService {
 
   async getInventoryAnalytics() {
     try {
-      const products = await this.prisma.product.findMany({
-        select: {
-          id: true,
-          name: true,
-          stock: true,
-          lowStockThreshold: true,
-          price: true,
-          isActive: true,
-        },
-        where: { isActive: true },
-        orderBy: { stock: 'asc' },
-      });
+      const { data: products } = await this.supabase
+        .from('product')
+        .select('id, name, stock, lowStockThreshold, price, isActive')
+        .eq('isActive', true)
+        .order('stock', { ascending: true });
 
       const stockLevels = products.map(product => ({
         id: product.id,
@@ -393,47 +365,33 @@ export class AnalyticsService {
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-      const orderStatuses = await this.prisma.orders.groupBy({
-        by: ['status'],
-        _count: {
-          status: true,
-        },
-        where: {
-          createdAt: { gte: thirtyDaysAgo },
-        },
-      });
+      const { data: statusOrders } = await this.supabase
+        .from('orders')
+        .select('status')
+        .gte('createdAt', thirtyDaysAgo.toISOString());
+      
+      const statusCount = statusOrders.reduce((acc, order) => {
+        acc[order.status] = (acc[order.status] || 0) + 1;
+        return acc;
+      }, {});
 
-      const ordersByStatus = orderStatuses.map(item => ({
-        status: item.status,
-        count: item._count.status,
+      const ordersByStatus = Object.entries(statusCount).map(([status, count]) => ({
+        status,
+        count,
       }));
 
-      const avgOrderValue = await this.prisma.orders.aggregate({
-        _avg: {
-          totalAmount: true,
-        },
-        where: {
-          createdAt: { gte: thirtyDaysAgo },
-          status: { not: 'CANCELLED' },
-        },
-      });
+      const { data: ordersWithAmount } = await this.supabase
+        .from('orders')
+        .select('id, totalAmount, createdAt')
+        .gte('createdAt', thirtyDaysAgo.toISOString())
+        .neq('status', 'CANCELLED')
+        .order('createdAt', { ascending: true });
 
-      const orders = await this.prisma.orders.findMany({
-        where: {
-          createdAt: { gte: thirtyDaysAgo },
-        },
-        select: {
-          id: true,
-          totalAmount: true,
-          createdAt: true,
-        },
-        orderBy: {
-          createdAt: 'asc',
-        },
-      });
+      const avgOrderValue = ordersWithAmount.reduce((sum, order) => 
+        sum + Number(order.totalAmount), 0) / (ordersWithAmount.length || 1);
 
       const dailyOrdersMap = new Map();
-      orders.forEach(order => {
+      ordersWithAmount.forEach(order => {
         const date = new Date(order.createdAt).toISOString().split('T')[0];
         
         if (!dailyOrdersMap.has(date)) {
@@ -463,7 +421,7 @@ export class AnalyticsService {
 
       return {
         ordersByStatus,
-        averageOrderValue: Number(avgOrderValue._avg.totalAmount) || 0,
+        averageOrderValue: avgOrderValue,
         dailyOrders,
       };
     } catch (error) {
@@ -479,15 +437,14 @@ export class AnalyticsService {
 
   private async getCustomerRetentionData() {
     try {
-      const totalCustomers = await this.prisma.profile.count({
-        where: { isActive: true },
-      });
+      const { count: totalCustomers } = await this.supabase
+        .from('profile')
+        .select('*', { count: 'exact', head: true })
+        .eq('isActive', true);
 
-      const orders = await this.prisma.orders.findMany({
-        select: {
-          userId: true,
-        },
-      });
+      const { data: orders } = await this.supabase
+        .from('orders')
+        .select('userId');
 
       const userOrderCounts = new Map();
       orders.forEach(order => {
@@ -517,16 +474,12 @@ export class AnalyticsService {
 
   private async getTotalRevenue(): Promise<number> {
     try {
-      const result = await this.prisma.orders.aggregate({
-        _sum: {
-          totalAmount: true,
-        },
-        where: {
-          status: { in: ['PAID', 'COMPLETED'] },
-        },
-      });
+      const { data: orders } = await this.supabase
+        .from('orders')
+        .select('totalAmount')
+        .in('status', ['PAID', 'COMPLETED']);
 
-      return Number(result._sum.totalAmount) || 0;
+      return orders.reduce((sum, order) => sum + Number(order.totalAmount), 0);
     } catch (error) {
       console.error('Error calculating total revenue:', error);
       return 0;
@@ -535,17 +488,13 @@ export class AnalyticsService {
 
   private async getRevenueByPeriod(startDate: Date): Promise<number> {
     try {
-      const result = await this.prisma.orders.aggregate({
-        _sum: {
-          totalAmount: true,
-        },
-        where: {
-          createdAt: { gte: startDate },
-          status: { in: ['PAID', 'COMPLETED'] },
-        },
-      });
+      const { data: orders } = await this.supabase
+        .from('orders')
+        .select('totalAmount')
+        .gte('createdAt', startDate.toISOString())
+        .in('status', ['PAID', 'COMPLETED']);
 
-      return Number(result._sum.totalAmount) || 0;
+      return orders.reduce((sum, order) => sum + Number(order.totalAmount), 0);
     } catch (error) {
       console.error('Error calculating revenue by period:', error);
       return 0;
