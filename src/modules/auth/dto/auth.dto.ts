@@ -32,12 +32,12 @@ export class SignInDto {
 }
 
 export class AdminSignInDto {
-  @ApiProperty({ example: 'admin@jjessential.com' })
+  @ApiProperty({ example: 'jadesola0518@gmail.com' })
   @IsEmail()
   @IsNotEmpty()
   email: string;
 
-  @ApiProperty({ example: 'admin123' })
+  @ApiProperty({ example: 'Amoke1805' })
   @IsString()
   @IsNotEmpty()
   password: string;

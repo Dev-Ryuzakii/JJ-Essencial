@@ -314,7 +314,7 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, se
 
 -- Insert initial admin user
 INSERT INTO public.profile (email, full_name, role)
-VALUES ('admin@jjessential.com', 'Admin User', 'ADMIN')
+VALUES ('jadesola0518@gmail.com', 'Admin User', 'ADMIN')
 ON CONFLICT (email) DO NOTHING;
 
 -- Insert some initial categories

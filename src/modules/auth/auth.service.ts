@@ -175,137 +175,40 @@ export class AuthService {
   async signIn(signInDto: SignInDto): Promise<AuthResponseDto> {
     const { email, password } = signInDto;
 
-    // Authenticate with Supabase
-    const { data: authData, error: authError } = await this.supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
-    if (authError) {
-      throw new UnauthorizedException('Invalid credentials');
-    }
-
-    // Get profile from our database
-    const { data: profile, error: profileError } = await this.supabase
-      .from('profile')
-      .select()
-      .eq('email', email)
-      .single();
-
-    if (!profile) {
-      throw new NotFoundException('User profile not found');
-    }
-
-    // Generate JWT token
-    const payload = { 
-      sub: profile.id, 
-      email: profile.email, 
-      role: profile.role 
-    };
-    
-    const access_token = this.jwtService.sign(payload);
-
-    return {
-      access_token,
-      user: {
-        id: profile.id,
-        email: profile.email,
-        fullName: profile.fullName,
-        role: profile.role,
-      },
-    };
-  }
-
-  async adminSignIn(adminSignInDto: AdminSignInDto): Promise<AuthResponseDto> {
-    const { email, password } = adminSignInDto;
-    const adminEmail = this.configService.get('ADMIN_EMAIL') || 'jadesola0518@gmail.com';
-    const adminPassword = this.configService.get('ADMIN_PASSWORD') || 'Amoke1805';
-
-    // Check if credentials match the admin credentials
-    if (email !== adminEmail || password !== adminPassword) {
-      throw new UnauthorizedException('Invalid admin credentials');
-    }
-
     try {
-      let currentAdminProfile;
-      // Try to check if admin exists in the database
-      const { data: adminProfile, error: findError } = await this.supabase
+      // First check if user exists in our database
+      const { data: profile, error: profileError } = await this.supabase
         .from('profile')
         .select()
         .eq('email', email)
         .single();
 
-      // If admin doesn't exist in the database, create it
-      if (!adminProfile) {
-        try {
-          // Create user in Supabase Auth
-          const { data: authData, error: authError } = await this.supabase.auth.admin.createUser({
-            email,
-            password,
-            email_confirm: true,
-          });
-
-          if (authError) {
-            throw new ConflictException(`Failed to create admin: ${authError.message}`);
-          }
-
-          // Create admin profile in our database
-          const { data: newAdminProfile, error: createError } = await this.supabase
-            .from('profile')
-            .insert([{
-              id: authData.user.id,
-              email,
-              full_name: 'Admin User',
-              role: 'ADMIN',
-            }])
-            .select()
-            .single();
-
-          if (createError) throw new Error(createError.message);
-          currentAdminProfile = newAdminProfile;
-        } catch (error) {
-          // If there's a database error or admin exists in Supabase but not in our database
-          // Generate a temporary admin session
-          const adminId = 'admin-' + Date.now(); // Generate a temporary ID
-          const payload = { 
-            sub: adminId, 
-            email: email, 
-            role: 'ADMIN' 
-          };
-          
-          const access_token = this.jwtService.sign(payload);
-
-          return {
-            access_token,
-            user: {
-              id: adminId,
-              email: email,
-              fullName: 'Admin User',
-              role: 'ADMIN',
-            },
-          };
-        }
+      if (!profile) {
+        this.logger.error(`Profile not found for email: ${email}`);
+        throw new UnauthorizedException('Invalid credentials');
       }
 
-      // Ensure the profile has ADMIN role
-      if (adminProfile.role !== 'ADMIN') {
-        // Update the role to ADMIN if it's not
-        const { data: updatedProfile, error: updateError } = await this.supabase
-          .from('profile')
-          .update({ role: 'ADMIN' })
-          .eq('id', adminProfile.id)
-          .select()
-          .single();
+      // Authenticate with Supabase
+      const { data: authData, error: authError } = await this.supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-        if (updateError) throw new Error(updateError.message);
-        currentAdminProfile = updatedProfile;
+      if (authError) {
+        this.logger.error(`Auth error for ${email}: ${authError.message}`);
+        throw new UnauthorizedException('Invalid credentials');
+      }
+
+      if (!authData.user) {
+        this.logger.error(`No user data returned for ${email}`);
+        throw new UnauthorizedException('Invalid credentials');
       }
 
       // Generate JWT token
       const payload = { 
-        sub: currentAdminProfile.id, 
-        email: currentAdminProfile.email, 
-        role: currentAdminProfile.role 
+        sub: profile.id, 
+        email: profile.email, 
+        role: profile.role 
       };
       
       const access_token = this.jwtService.sign(payload);
@@ -313,35 +216,56 @@ export class AuthService {
       return {
         access_token,
         user: {
-          id: currentAdminProfile.id,
-          email: currentAdminProfile.email,
-          fullName: currentAdminProfile.full_name,
-          role: currentAdminProfile.role,
+          id: profile.id,
+          email: profile.email,
+          fullName: profile.fullName,
+          role: profile.role,
         },
       };
     } catch (error) {
-      // If there's a database error, still generate a token for the admin
-      console.log('Database error during admin login:', error.message);
-      
-      const adminId = 'admin-' + Date.now(); // Generate a temporary ID
-      const payload = { 
-        sub: adminId, 
-        email: email, 
-        role: 'ADMIN' 
-      };
-      
-      const access_token = this.jwtService.sign(payload);
-
-      return {
-        access_token,
-        user: {
-          id: adminId,
-          email: email,
-          fullName: 'Admin User',
-          role: 'ADMIN',
-        },
-      };
+      console.error('Sign-in error:', error);
+      throw new UnauthorizedException('Invalid credentials');
     }
+  }
+
+  async adminSignIn(adminSignInDto: AdminSignInDto): Promise<AuthResponseDto> {
+    const { email, password } = adminSignInDto;
+
+    // Get admin credentials from environment
+    const adminEmail = this.configService.get('ADMIN_EMAIL') || 'jadesola0518@gmail.com';
+    const adminPassword = this.configService.get('ADMIN_PASSWORD') || 'Amoke1805';
+
+    this.logger.log(`Attempting admin login for: ${email}`);
+    this.logger.log(`Expected admin email: ${adminEmail}`);
+
+    // Check if credentials match the admin credentials
+    if (email !== adminEmail || password !== adminPassword) {
+      this.logger.error(`Invalid admin credentials provided`);
+      throw new UnauthorizedException('Invalid admin credentials');
+    }
+
+    this.logger.log('Admin credentials validated successfully');
+
+    // Generate JWT token with admin role
+    const payload = { 
+      sub: 'admin-user', // Fixed admin user ID
+      email: email, 
+      role: 'ADMIN' 
+    };
+    
+    const access_token = this.jwtService.sign(payload);
+
+    this.logger.log('Admin JWT token generated successfully');
+
+    return {
+      access_token,
+      user: {
+        id: 'admin-user',
+        email: email,
+        fullName: 'Admin User',
+        role: 'ADMIN',
+      },
+    };
   }
 
   async resetPassword(resetPasswordDto: ResetPasswordDto): Promise<{ message: string }> {
@@ -372,6 +296,17 @@ export class AuthService {
   }
 
   async validateUser(userId: string): Promise<any> {
+    // Handle special case for admin user
+    if (userId === 'admin-user') {
+      const adminEmail = this.configService.get('ADMIN_EMAIL');
+      return {
+        id: 'admin-user',
+        email: adminEmail,
+        fullName: 'Admin User',
+        role: 'ADMIN',
+      };
+    }
+
     const { data: profile, error } = await this.supabase
       .from('profile')
       .select()
@@ -446,6 +381,26 @@ export class AuthService {
    * Utility method to check and fix inconsistencies between Supabase Auth and local database
    * This is useful for debugging and fixing user registration issues
    */
+  private generateAuthResponse(profile: any): AuthResponseDto {
+    const payload = { 
+      sub: profile.id, 
+      email: profile.email, 
+      role: profile.role 
+    };
+    
+    const access_token = this.jwtService.sign(payload);
+
+    return {
+      access_token,
+      user: {
+        id: profile.id,
+        email: profile.email,
+        fullName: profile.full_name,
+        role: profile.role,
+      },
+    };
+  }
+
   async syncUsers(fixInconsistencies = false) {
     this.logger.log('Starting user synchronization check...');
     

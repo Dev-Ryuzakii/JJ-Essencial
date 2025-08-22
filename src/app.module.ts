@@ -6,6 +6,7 @@ import configuration from './config/configuration';
 
 // Modules
 import { AuthModule } from './modules/auth/auth.module';
+import { AdminModule } from './modules/admin/admin.module';
 import { ProductsModule } from './modules/products/products.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { PaymentsModule } from './modules/payments/payments.module';
@@ -55,6 +56,7 @@ import { AppService } from './app.service';
 
     // Business modules
     AuthModule,
+    AdminModule,
     ProductsModule,
     OrdersModule,
     PaymentsModule,

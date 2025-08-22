@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SupabaseConfig } from '../../config/supabase.config';
@@ -10,6 +10,7 @@ import * as crypto from 'crypto';
 
 @Injectable()
 export class PaymentsService {
+  private readonly logger = new Logger(PaymentsService.name);
   private supabase: SupabaseClient;
 
   constructor(
@@ -356,43 +357,47 @@ export class PaymentsService {
 
   async getPaymentHistory(userId?: string) {
     let query = this.supabase
-      .from('paymentTransaction')
+      .from('orders')
       .select(`
-        *,
-        order:orders (
-          id,
-          status,
-          user:users (
-            email,
-            fullName
-          )
+        id,
+        payment_ref,
+        total_amount,
+        payment_method,
+        payment_status,
+        status,
+        created_at,
+        updated_at,
+        profile:user_id (
+          email,
+          full_name
         )
       `)
-      .order('createdAt', { ascending: false });
+      .order('created_at', { ascending: false });
 
     if (userId) {
-      query = query.eq('order.userId', userId);
+      query = query.eq('user_id', userId);
     }
 
-    const { data: transactions, error } = await query;
+    const { data: orders, error } = await query;
 
     if (error) {
+      this.logger.error('Error fetching payment history:', error);
       throw new Error('Failed to fetch payment history');
     }
 
-    return (transactions || []).map(transaction => ({
-      id: transaction.id,
-      reference: transaction.reference,
-      amount: parseFloat(transaction.amount.toString()),
-      gateway: transaction.gateway,
-      status: transaction.status,
-      orderId: transaction.orderId,
-      createdAt: transaction.createdAt,
-      order: transaction.order ? {
-        id: transaction.order.id,
-        status: transaction.order.status,
-        user: transaction.order.user,
-      } : null,
+    return (orders || []).map(order => ({
+      id: order.id,
+      reference: order.payment_ref,
+      amount: parseFloat(order.total_amount?.toString() || '0'),
+      gateway: order.payment_method,
+      status: order.payment_status,
+      orderId: order.id,
+      createdAt: order.created_at,
+      order: {
+        id: order.id,
+        status: order.status,
+        user: order.profile,
+      },
     }));
   }
 

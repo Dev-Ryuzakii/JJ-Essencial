@@ -1,0 +1,1096 @@
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { SupabaseConfig } from '../../config/supabase.config';
+import { UploadService } from '../upload/upload.service';
+import { 
+  DashboardStatsDto,
+  AdminUserQueryDto,
+  UpdateUserStatusDto,
+  AdminOrderQueryDto,
+  UpdateOrderStatusDto,
+  AdminProductQueryDto,
+  CreateAdminProductDto,
+  UpdateAdminProductDto,
+  AdminCategoryQueryDto,
+  CreateAdminCategoryDto,
+  UpdateAdminCategoryDto,
+  AdminAnalyticsQueryDto,
+  AdminReportQueryDto,
+  AdminSettingsDto
+} from './dto/admin.dto';
+
+@Injectable()
+export class AdminService {
+  private supabase;
+  private readonly logger = new Logger(AdminService.name);
+
+  constructor(
+    private configService: ConfigService,
+    private uploadService: UploadService
+  ) {
+    this.supabase = SupabaseConfig.getInstance(this.configService);
+  }
+
+  // ============= DASHBOARD SERVICES =============
+  async getDashboardStats(): Promise<DashboardStatsDto> {
+    try {
+      // Get total users
+      const { count: totalUsers } = await this.supabase
+        .from('profile')
+        .select('*', { count: 'exact', head: true });
+
+      // Get total orders
+      const { count: totalOrders } = await this.supabase
+        .from('orders')
+        .select('*', { count: 'exact', head: true });
+
+      // Get total products
+      const { count: totalProducts } = await this.supabase
+        .from('product')
+        .select('*', { count: 'exact', head: true });
+
+      // Get pending orders
+      const { count: pendingOrders } = await this.supabase
+        .from('orders')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'PENDING');
+
+      // Get low stock products (stock <= 10)
+      const { count: lowStockProducts } = await this.supabase
+        .from('product')
+        .select('*', { count: 'exact', head: true })
+        .lte('stock', 10);
+
+      // Get new users today
+      const today = new Date().toISOString().split('T')[0];
+      const { count: newUsersToday } = await this.supabase
+        .from('profile')
+        .select('*', { count: 'exact', head: true })
+        .gte('created_at', today);
+
+      // Get orders today
+      const { count: ordersToday } = await this.supabase
+        .from('orders')
+        .select('*', { count: 'exact', head: true })
+        .gte('created_at', today);
+
+      // Get total revenue from completed orders
+      const { data: revenueData } = await this.supabase
+        .from('orders')
+        .select('total_amount')
+        .in('status', ['PAID', 'COMPLETED']);
+
+      const totalRevenue = revenueData?.reduce((sum, order) => sum + (order.total_amount || 0), 0) || 0;
+
+      // Get today's revenue
+      const { data: todayRevenueData } = await this.supabase
+        .from('orders')
+        .select('total_amount')
+        .in('status', ['PAID', 'COMPLETED'])
+        .gte('created_at', today);
+
+      const revenueToday = todayRevenueData?.reduce((sum, order) => sum + (order.total_amount || 0), 0) || 0;
+
+      // Calculate monthly growth (simplified)
+      const monthlyGrowth = {
+        users: 15.2, // Mock data - would calculate from actual data
+        orders: 8.5,
+        revenue: 12.3
+      };
+
+      return {
+        totalUsers: totalUsers || 0,
+        totalOrders: totalOrders || 0,
+        totalProducts: totalProducts || 0,
+        totalRevenue,
+        pendingOrders: pendingOrders || 0,
+        lowStockProducts: lowStockProducts || 0,
+        newUsersToday: newUsersToday || 0,
+        ordersToday: ordersToday || 0,
+        revenueToday,
+        monthlyGrowth
+      };
+    } catch (error) {
+      this.logger.error('Error getting dashboard stats:', error);
+      throw error;
+    }
+  }
+
+  // ============= USER MANAGEMENT SERVICES =============
+  async getUsers(query: AdminUserQueryDto) {
+    const { page = 1, limit = 10, search, role, isActive, sortBy = 'created_at', sortOrder = 'DESC' } = query;
+    
+    // Map sortBy field to database column name
+    const mappedSortBy = this.mapSortField(sortBy);
+    
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+
+    try {
+      let supabaseQuery = this.supabase
+        .from('profile')
+        .select('*', { count: 'exact' });
+
+      // Apply filters
+      if (search) {
+        supabaseQuery = supabaseQuery.or(`email.ilike.%${search}%,full_name.ilike.%${search}%`);
+      }
+
+      if (role) {
+        supabaseQuery = supabaseQuery.eq('role', role);
+      }
+
+      if (typeof isActive === 'boolean') {
+        supabaseQuery = supabaseQuery.eq('is_active', isActive);
+      }
+
+      // Apply sorting and pagination
+      supabaseQuery = supabaseQuery
+        .order(mappedSortBy, { ascending: sortOrder === 'ASC' })
+        .range(from, to);
+
+      const { data: users, count, error } = await supabaseQuery;
+
+      if (error) throw error;
+
+      return {
+        data: users || [],
+        pagination: {
+          page,
+          limit,
+          total: count || 0,
+          pages: Math.ceil((count || 0) / limit)
+        }
+      };
+    } catch (error) {
+      this.logger.error('Error getting users:', error);
+      throw error;
+    }
+  }
+
+  async getUserById(id: string) {
+    try {
+      const { data: user, error } = await this.supabase
+        .from('profile')
+        .select('*')
+        .eq('id', id)
+        .single();
+
+      if (error || !user) {
+        throw new NotFoundException('User not found');
+      }
+
+      // Get user's orders
+      const { data: orders } = await this.supabase
+        .from('orders')
+        .select('id, status, total_amount, created_at')
+        .eq('user_id', id)
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      return {
+        ...user,
+        orders: orders || []
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+      this.logger.error('Error getting user by ID:', error);
+      throw error;
+    }
+  }
+
+  async updateUserStatus(id: string, updateData: UpdateUserStatusDto) {
+    try {
+      const { data: user, error } = await this.supabase
+        .from('profile')
+        .update({ 
+          is_active: updateData.isActive,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      if (!user) throw new NotFoundException('User not found');
+
+      return user;
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+      this.logger.error('Error updating user status:', error);
+      throw error;
+    }
+  }
+
+  async deleteUser(id: string) {
+    try {
+      // Check if user has orders
+      const { count: orderCount } = await this.supabase
+        .from('orders')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', id);
+
+      if (orderCount && orderCount > 0) {
+        throw new BadRequestException('Cannot delete user with existing orders');
+      }
+
+      // Delete user
+      const { error } = await this.supabase
+        .from('profile')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      return { message: 'User deleted successfully' };
+    } catch (error) {
+      if (error instanceof BadRequestException) throw error;
+      this.logger.error('Error deleting user:', error);
+      throw error;
+    }
+  }
+
+  // ============= ORDER MANAGEMENT SERVICES =============
+  
+  // Helper function to map camelCase to snake_case for database fields
+  private mapSortField(field: string): string {
+    const fieldMappings: { [key: string]: string } = {
+      'createdAt': 'created_at',
+      'updatedAt': 'updated_at',
+      'totalAmount': 'total_amount',
+      'paymentStatus': 'payment_status',
+      'userId': 'user_id',
+      'fullName': 'full_name',
+      'isActive': 'is_active',
+      'lowStockThreshold': 'low_stock_threshold',
+      'sortOrder': 'sort_order',
+      'parentId': 'parent_id',
+      'imageUrl': 'image_url'
+    };
+    
+    return fieldMappings[field] || field;
+  }
+
+  async getOrders(query: AdminOrderQueryDto) {
+    const { 
+      page = 1, 
+      limit = 10, 
+      search, 
+      status, 
+      paymentStatus, 
+      dateFrom, 
+      dateTo, 
+      userId,
+      sortBy = 'created_at', 
+      sortOrder = 'DESC' 
+    } = query;
+    
+    // Map sortBy field to database column name
+    const mappedSortBy = this.mapSortField(sortBy);
+    
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+
+    try {
+      let supabaseQuery = this.supabase
+        .from('orders')
+        .select(`
+          *,
+          profile:user_id(id, email, full_name),
+          order_item(*, product(*))
+        `, { count: 'exact' });
+
+      // Apply filters
+      if (search) {
+        supabaseQuery = supabaseQuery.or(`id.ilike.%${search}%`);
+      }
+
+      if (status) {
+        supabaseQuery = supabaseQuery.eq('status', status);
+      }
+
+      if (paymentStatus) {
+        supabaseQuery = supabaseQuery.eq('payment_status', paymentStatus);
+      }
+
+      if (userId) {
+        supabaseQuery = supabaseQuery.eq('user_id', userId);
+      }
+
+      if (dateFrom) {
+        supabaseQuery = supabaseQuery.gte('created_at', dateFrom);
+      }
+
+      if (dateTo) {
+        supabaseQuery = supabaseQuery.lte('created_at', dateTo);
+      }
+
+      // Apply sorting and pagination
+      supabaseQuery = supabaseQuery
+        .order(mappedSortBy, { ascending: sortOrder === 'ASC' })
+        .range(from, to);
+
+      const { data: orders, count, error } = await supabaseQuery;
+
+      if (error) throw error;
+
+      return {
+        data: orders || [],
+        pagination: {
+          page,
+          limit,
+          total: count || 0,
+          pages: Math.ceil((count || 0) / limit)
+        }
+      };
+    } catch (error) {
+      this.logger.error('Error getting orders:', error);
+      throw error;
+    }
+  }
+
+  async getOrderById(id: string) {
+    try {
+      const { data: order, error } = await this.supabase
+        .from('orders')
+        .select(`
+          *,
+          profile:user_id(id, email, full_name, phone),
+          order_item(*, product(*))
+        `)
+        .eq('id', id)
+        .single();
+
+      if (error || !order) {
+        throw new NotFoundException('Order not found');
+      }
+
+      return order;
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+      this.logger.error('Error getting order by ID:', error);
+      throw error;
+    }
+  }
+
+  async updateOrderStatus(id: string, updateData: UpdateOrderStatusDto) {
+    try {
+      const { data: order, error } = await this.supabase
+        .from('orders')
+        .update({
+          status: updateData.status,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      if (!order) throw new NotFoundException('Order not found');
+
+      // Create tracking entry if order_tracking table exists
+      if (updateData.notes || updateData.trackingNumber) {
+        await this.supabase
+          .from('order_tracking')
+          .insert({
+            order_id: id,
+            status: updateData.status,
+            notes: updateData.notes,
+            tracking_number: updateData.trackingNumber,
+            location: updateData.location,
+            created_at: new Date().toISOString()
+          });
+      }
+
+      return order;
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+      this.logger.error('Error updating order status:', error);
+      throw error;
+    }
+  }
+
+  // ============= PRODUCT MANAGEMENT SERVICES =============
+  async getProducts(query: AdminProductQueryDto) {
+    const { 
+      page = 1, 
+      limit = 10, 
+      search, 
+      categoryId, 
+      isActive, 
+      lowStock,
+      sortBy = 'created_at', 
+      sortOrder = 'DESC' 
+    } = query;
+    
+    // Map sortBy field to database column name
+    const mappedSortBy = this.mapSortField(sortBy);
+    
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+
+    try {
+      let supabaseQuery = this.supabase
+        .from('product')
+        .select(`
+          *,
+          category(id, name)
+        `, { count: 'exact' });
+
+      // Apply filters
+      if (search) {
+        supabaseQuery = supabaseQuery.or(`name.ilike.%${search}%,description.ilike.%${search}%,sku.ilike.%${search}%`);
+      }
+
+      if (categoryId) {
+        supabaseQuery = supabaseQuery.eq('category_id', categoryId);
+      }
+
+      if (typeof isActive === 'boolean') {
+        supabaseQuery = supabaseQuery.eq('is_active', isActive);
+      }
+
+      if (lowStock) {
+        supabaseQuery = supabaseQuery.lte('stock', 10);
+      }
+
+      // Apply sorting and pagination
+      supabaseQuery = supabaseQuery
+        .order(mappedSortBy, { ascending: sortOrder === 'ASC' })
+        .range(from, to);
+
+      const { data: products, count, error } = await supabaseQuery;
+
+      if (error) throw error;
+
+      return {
+        data: products || [],
+        pagination: {
+          page,
+          limit,
+          total: count || 0,
+          pages: Math.ceil((count || 0) / limit)
+        }
+      };
+    } catch (error) {
+      this.logger.error('Error getting products:', error);
+      throw error;
+    }
+  }
+
+  async createProduct(productData: CreateAdminProductDto) {
+    try {
+      const { data: product, error } = await this.supabase
+        .from('product')
+        .insert({
+          name: productData.name,
+          description: productData.description,
+          price: productData.price,
+          stock: productData.stock,
+          sku: productData.sku,
+          category_id: productData.categoryId,
+          images: productData.images || [],
+          low_stock_threshold: productData.lowStockThreshold || 10,
+          is_active: productData.isActive !== false,
+          slug: this.generateSlug(productData.name),
+          created_at: new Date().toISOString()
+        })
+        .select(`*, category(id, name)`)
+        .single();
+
+      if (error) throw error;
+
+      return product;
+    } catch (error) {
+      this.logger.error('Error creating product:', error);
+      throw error;
+    }
+  }
+
+  async updateProduct(id: string, productData: UpdateAdminProductDto) {
+    try {
+      const updatePayload: any = { ...productData };
+      
+      if (productData.name) {
+        updatePayload.slug = this.generateSlug(productData.name);
+      }
+      
+      updatePayload.updated_at = new Date().toISOString();
+
+      const { data: product, error } = await this.supabase
+        .from('product')
+        .update(updatePayload)
+        .eq('id', id)
+        .select(`*, category(id, name)`)
+        .single();
+
+      if (error) throw error;
+      if (!product) throw new NotFoundException('Product not found');
+
+      return product;
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+      this.logger.error('Error updating product:', error);
+      throw error;
+    }
+  }
+
+  async deleteProduct(id: string) {
+    try {
+      // Check if product has orders
+      const { count: orderItemCount } = await this.supabase
+        .from('order_item')
+        .select('*', { count: 'exact', head: true })
+        .eq('product_id', id);
+
+      if (orderItemCount && orderItemCount > 0) {
+        throw new BadRequestException('Cannot delete product with existing orders');
+      }
+
+      const { error } = await this.supabase
+        .from('product')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      return { message: 'Product deleted successfully' };
+    } catch (error) {
+      if (error instanceof BadRequestException) throw error;
+      this.logger.error('Error deleting product:', error);
+      throw error;
+    }
+  }
+
+  // ============= CATEGORY MANAGEMENT SERVICES =============
+  async getCategories(query: AdminCategoryQueryDto) {
+    const { includeInactive = false, search, sortBy = 'name', sortOrder = 'ASC' } = query;
+
+    try {
+      const mappedSortBy = this.mapSortField(sortBy);
+      
+      let supabaseQuery = this.supabase
+        .from('category')
+        .select('*');
+
+      if (!includeInactive) {
+        supabaseQuery = supabaseQuery.eq('is_active', true);
+      }
+
+      if (search) {
+        supabaseQuery = supabaseQuery.or(`name.ilike.%${search}%,description.ilike.%${search}%`);
+      }
+
+      supabaseQuery = supabaseQuery.order(mappedSortBy, { ascending: sortOrder === 'ASC' });
+
+      const { data: categories, error } = await supabaseQuery;
+
+      if (error) throw error;
+
+      return categories || [];
+    } catch (error) {
+      this.logger.error('Error getting categories:', error);
+      throw error;
+    }
+  }
+
+  async createCategory(categoryData: CreateAdminCategoryDto) {
+    try {
+      const slug = categoryData.slug || this.generateSlug(categoryData.name);
+
+      // Check if category with same name already exists
+      const { data: existingCategory } = await this.supabase
+        .from('category')
+        .select('id, name')
+        .eq('name', categoryData.name)
+        .single();
+
+      if (existingCategory) {
+        throw new BadRequestException(`Category with name "${categoryData.name}" already exists`);
+      }
+
+      const { data: category, error } = await this.supabase
+        .from('category')
+        .insert({
+          name: categoryData.name,
+          description: categoryData.description,
+          slug,
+          parent_id: categoryData.parentId,
+          image_url: categoryData.imageUrl,
+          sort_order: categoryData.sortOrder || 0,
+          is_active: categoryData.isActive !== false,
+          created_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+
+      if (error) {
+        // Handle duplicate key constraint errors
+        if (error.code === '23505') {
+          if (error.message.includes('category_name_key')) {
+            throw new BadRequestException(`Category with name "${categoryData.name}" already exists`);
+          }
+          if (error.message.includes('category_slug_key')) {
+            throw new BadRequestException(`Category with slug "${slug}" already exists`);
+          }
+          throw new BadRequestException('A category with these details already exists');
+        }
+        throw error;
+      }
+
+      return category;
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      this.logger.error('Error creating category:', error);
+      throw new BadRequestException('Failed to create category');
+    }
+  }
+
+  async updateCategory(id: string, categoryData: UpdateAdminCategoryDto) {
+    try {
+      const updatePayload: any = {};
+      
+      // Map camelCase fields to snake_case database fields
+      if (categoryData.name !== undefined) updatePayload.name = categoryData.name;
+      if (categoryData.description !== undefined) updatePayload.description = categoryData.description;
+      if (categoryData.slug !== undefined) updatePayload.slug = categoryData.slug;
+      if (categoryData.parentId !== undefined) updatePayload.parent_id = categoryData.parentId;
+      if (categoryData.imageUrl !== undefined) updatePayload.image_url = categoryData.imageUrl;
+      if (categoryData.sortOrder !== undefined) updatePayload.sort_order = categoryData.sortOrder;
+      if (categoryData.isActive !== undefined) updatePayload.is_active = categoryData.isActive;
+      
+      if (categoryData.name) {
+        // Check if another category with same name already exists (excluding current category)
+        const { data: existingCategory } = await this.supabase
+          .from('category')
+          .select('id, name')
+          .eq('name', categoryData.name)
+          .neq('id', id)
+          .single();
+
+        if (existingCategory) {
+          throw new BadRequestException(`Category with name "${categoryData.name}" already exists`);
+        }
+        
+        updatePayload.slug = categoryData.slug || this.generateSlug(categoryData.name);
+      }
+      
+      updatePayload.updated_at = new Date().toISOString();
+
+      const { data: category, error } = await this.supabase
+        .from('category')
+        .update(updatePayload)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) {
+        // Handle duplicate key constraint errors
+        if (error.code === '23505') {
+          if (error.message.includes('category_name_key')) {
+            throw new BadRequestException(`Category with name "${categoryData.name}" already exists`);
+          }
+          if (error.message.includes('category_slug_key')) {
+            const slug = updatePayload.slug || this.generateSlug(categoryData.name);
+            throw new BadRequestException(`Category with slug "${slug}" already exists`);
+          }
+          throw new BadRequestException('A category with these details already exists');
+        }
+        throw error;
+      }
+      
+      if (!category) throw new NotFoundException('Category not found');
+
+      return category;
+    } catch (error) {
+      if (error instanceof NotFoundException || error instanceof BadRequestException) {
+        throw error;
+      }
+      this.logger.error('Error updating category:', error);
+      throw new BadRequestException('Failed to update category');
+    }
+  }
+
+  async deleteCategory(id: string) {
+    try {
+      // Check if category has products
+      const { count: productCount } = await this.supabase
+        .from('products')
+        .select('*', { count: 'exact', head: true })
+        .eq('category_id', id);
+
+      if (productCount && productCount > 0) {
+        throw new BadRequestException('Cannot delete category with existing products');
+      }
+
+      const { error } = await this.supabase
+        .from('category')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      return { message: 'Category deleted successfully' };
+    } catch (error) {
+      if (error instanceof BadRequestException) throw error;
+      this.logger.error('Error deleting category:', error);
+      throw error;
+    }
+  }
+
+  // ============= ANALYTICS SERVICES =============
+  async getSalesAnalytics(query: AdminAnalyticsQueryDto) {
+    const { startDate, endDate, groupBy = 'daily' } = query;
+
+    try {
+      // Basic sales analytics implementation
+      let supabaseQuery = this.supabase
+        .from('orders')
+        .select('total_amount, created_at, status')
+        .in('status', ['PAID', 'COMPLETED']);
+
+      if (startDate) {
+        supabaseQuery = supabaseQuery.gte('created_at', startDate);
+      }
+
+      if (endDate) {
+        supabaseQuery = supabaseQuery.lte('created_at', endDate);
+      }
+
+      const { data: orders, error } = await supabaseQuery;
+
+      if (error) throw error;
+
+      const totalSales = orders?.reduce((sum, order) => sum + (order.total_amount || 0), 0) || 0;
+      const totalOrders = orders?.length || 0;
+      const averageOrderValue = totalOrders > 0 ? totalSales / totalOrders : 0;
+
+      return {
+        totalSales,
+        totalOrders,
+        averageOrderValue,
+        salesByPeriod: [], // Would implement grouping logic here
+        topProducts: [],
+        topCategories: []
+      };
+    } catch (error) {
+      this.logger.error('Error getting sales analytics:', error);
+      throw error;
+    }
+  }
+
+  async getUserAnalytics(query: AdminAnalyticsQueryDto) {
+    try {
+      const { count: totalUsers } = await this.supabase
+        .from('profile')
+        .select('*', { count: 'exact', head: true });
+
+      const { count: activeUsers } = await this.supabase
+        .from('profile')
+        .select('*', { count: 'exact', head: true })
+        .eq('is_active', true);
+
+      // Get new users in the last 30 days
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+      const { count: newUsers } = await this.supabase
+        .from('profile')
+        .select('*', { count: 'exact', head: true })
+        .gte('created_at', thirtyDaysAgo.toISOString());
+
+      return {
+        totalUsers: totalUsers || 0,
+        newUsers: newUsers || 0,
+        activeUsers: activeUsers || 0,
+        userGrowth: [],
+        userDemographics: []
+      };
+    } catch (error) {
+      this.logger.error('Error getting user analytics:', error);
+      throw error;
+    }
+  }
+
+  async getInventoryAnalytics() {
+    try {
+      const { count: totalProducts } = await this.supabase
+        .from('products')
+        .select('*', { count: 'exact', head: true });
+
+      const { count: lowStockProducts } = await this.supabase
+        .from('products')
+        .select('*', { count: 'exact', head: true })
+        .lte('stock', 10);
+
+      const { count: outOfStockProducts } = await this.supabase
+        .from('products')
+        .select('*', { count: 'exact', head: true })
+        .eq('stock', 0);
+
+      return {
+        totalProducts: totalProducts || 0,
+        lowStockProducts: lowStockProducts || 0,
+        outOfStockProducts: outOfStockProducts || 0,
+        topSellingProducts: [],
+        categoryDistribution: []
+      };
+    } catch (error) {
+      this.logger.error('Error getting inventory analytics:', error);
+      throw error;
+    }
+  }
+
+  // ============= REPORT SERVICES =============
+  async generateSalesReport(query: AdminReportQueryDto) {
+    // Basic implementation - would expand with actual report generation
+    return { 
+      reportUrl: `/reports/sales-${Date.now()}.${query.format || 'csv'}`, 
+      data: [] 
+    };
+  }
+
+  async generateUserReport(query: AdminReportQueryDto) {
+    return { 
+      reportUrl: `/reports/users-${Date.now()}.${query.format || 'csv'}`, 
+      data: [] 
+    };
+  }
+
+  async generateInventoryReport(query: AdminReportQueryDto) {
+    return { 
+      reportUrl: `/reports/inventory-${Date.now()}.${query.format || 'csv'}`, 
+      data: [] 
+    };
+  }
+
+  // ============= SETTINGS SERVICES =============
+  async getSettings() {
+    try {
+      // Implementation would depend on how settings are stored
+      // Could be in a settings table or configuration
+      const { data: settings, error } = await this.supabase
+        .from('site_settings')
+        .select('*')
+        .single();
+
+      if (error && error.code !== 'PGRST116') { // Not found error
+        throw error;
+      }
+
+      return settings || {
+        siteName: 'JJ Essential',
+        siteDescription: 'Your premium e-commerce destination',
+        contactEmail: 'contact@jjessential.com',
+        currency: 'NGN',
+        timezone: 'Africa/Lagos'
+      };
+    } catch (error) {
+      this.logger.error('Error getting settings:', error);
+      return {};
+    }
+  }
+
+  async updateSettings(settings: AdminSettingsDto) {
+    try {
+      // Implementation would update settings in database
+      const { data, error } = await this.supabase
+        .from('site_settings')
+        .upsert(settings)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      return data;
+    } catch (error) {
+      this.logger.error('Error updating settings:', error);
+      throw error;
+    }
+  }
+
+  // ============= UTILITY METHODS =============
+  private generateSlug(name: string): string {
+    return name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)+/g, '');
+  }
+
+  // ============= PRODUCT IMAGE MANAGEMENT SERVICES =============
+  async uploadProductImages(productId: string, images: Express.Multer.File[], isMain: boolean = false) {
+    try {
+      // Check if product exists
+      const { data: product, error: productError } = await this.supabase
+        .from('product')
+        .select('id, images')
+        .eq('id', productId)
+        .single();
+
+      if (productError || !product) {
+        throw new NotFoundException('Product not found');
+      }
+
+      // Upload images to Supabase
+      const uploadResults = await this.uploadService.uploadMultipleToSupabase(images, 'products');
+      
+      // Create image objects
+      const currentImages = product.images || [];
+      const newImages = uploadResults.map((result, index) => {
+        return {
+          id: this.generateUniqueId(),
+          url: result.url,
+          isMain: isMain && index === 0 && currentImages.length === 0, // Only set first image as main if no existing images
+          sortOrder: currentImages.length + index
+        };
+      });
+
+      // If this is the first image upload and isMain is true, set the first image as main
+      if (isMain && currentImages.length === 0 && newImages.length > 0) {
+        newImages[0].isMain = true;
+      }
+
+      // Update product with new images
+      const updatedImages = [...currentImages, ...newImages];
+      const { error: updateError } = await this.supabase
+        .from('product')
+        .update({ images: updatedImages })
+        .eq('id', productId);
+
+      if (updateError) {
+        throw new BadRequestException('Failed to update product with new images');
+      }
+
+      return newImages;
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+      this.logger.error('Error uploading product images:', error);
+      throw new BadRequestException('Failed to upload product images');
+    }
+  }
+
+  async setMainProductImage(productId: string, imageId: string) {
+    try {
+      // Check if product exists
+      const { data: product, error: productError } = await this.supabase
+        .from('product')
+        .select('id, images')
+        .eq('id', productId)
+        .single();
+
+      if (productError || !product) {
+        throw new NotFoundException('Product not found');
+      }
+
+      const images = product.images || [];
+      const imageIndex = images.findIndex(img => img.id === imageId);
+      
+      if (imageIndex === -1) {
+        throw new NotFoundException('Image not found');
+      }
+
+      // Update images array to set the selected image as main
+      const updatedImages = images.map((img, index) => ({
+        ...img,
+        isMain: index === imageIndex
+      }));
+
+      // Update product with updated images
+      const { error: updateError } = await this.supabase
+        .from('product')
+        .update({ images: updatedImages })
+        .eq('id', productId);
+
+      if (updateError) {
+        throw new BadRequestException('Failed to update product image');
+      }
+
+      return { 
+        message: 'Image set as main successfully',
+        image: updatedImages[imageIndex]
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+      this.logger.error('Error setting main product image:', error);
+      throw new BadRequestException('Failed to set main product image');
+    }
+  }
+
+  async deleteProductImage(productId: string, imageId: string) {
+    try {
+      // Check if product exists
+      const { data: product, error: productError } = await this.supabase
+        .from('product')
+        .select('id, images')
+        .eq('id', productId)
+        .single();
+
+      if (productError || !product) {
+        throw new NotFoundException('Product not found');
+      }
+
+      const images = product.images || [];
+      const imageIndex = images.findIndex(img => img.id === imageId);
+      
+      if (imageIndex === -1) {
+        throw new NotFoundException('Image not found');
+      }
+
+      // Get the image to delete
+      const imageToDelete = images[imageIndex];
+      
+      // Remove the image from the array
+      const updatedImages = images.filter(img => img.id !== imageId);
+
+      // If the deleted image was the main image, set the first remaining image as main (if any)
+      if (imageToDelete.isMain && updatedImages.length > 0) {
+        updatedImages[0].isMain = true;
+      }
+
+      // Update product with updated images
+      const { error: updateError } = await this.supabase
+        .from('product')
+        .update({ images: updatedImages })
+        .eq('id', productId);
+
+      if (updateError) {
+        throw new BadRequestException('Failed to update product after image deletion');
+      }
+
+      // Extract filename from URL to delete from storage
+      // Assuming URL format: https://supabaseurl/storage/v1/object/public/bucket/filename
+      const url = new URL(imageToDelete.url);
+      const pathname = url.pathname;
+      const parts = pathname.split('/');
+      const bucketIndex = parts.findIndex(part => part === 'public') + 1;
+      
+      if (bucketIndex > 0 && bucketIndex < parts.length) {
+        const bucket = parts[bucketIndex];
+        const filename = parts.slice(bucketIndex + 1).join('/');
+        
+        try {
+          // Try to delete the file from Supabase storage, but don't block the response
+          this.uploadService.deleteFromSupabase(filename, bucket)
+            .catch(err => this.logger.error(`Failed to delete file from storage: ${err.message}`));
+        } catch (error) {
+          this.logger.error('Error parsing image URL for deletion:', error);
+        }
+      }
+
+      return { 
+        message: 'Image deleted successfully'
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+      this.logger.error('Error deleting product image:', error);
+      throw new BadRequestException('Failed to delete product image');
+    }
+  }
+
+  private generateUniqueId(): string {
+    return Math.random().toString(36).substring(2, 15) + 
+           Math.random().toString(36).substring(2, 15);
+  }
+}
