@@ -589,3 +589,68 @@ export class ExportQueryDto {
   @IsString({ each: true })
   fields?: string[];
 }
+
+// ============= REVIEW MANAGEMENT DTOs =============
+export class AdminReviewQueryDto {
+  @ApiPropertyOptional({ default: 1, minimum: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @Min(1)
+  page?: number = 1;
+
+  @ApiPropertyOptional({ default: 10, minimum: 1, maximum: 100 })
+  @IsOptional()
+  @Type(() => Number)
+  @Min(1)
+  @Max(100)
+  limit?: number = 10;
+
+  @ApiPropertyOptional({ description: 'Filter by product ID' })
+  @IsOptional()
+  @IsString()
+  productId?: string;
+
+  @ApiPropertyOptional({ description: 'Filter by user ID' })
+  @IsOptional()
+  @IsString()
+  userId?: string;
+
+  @ApiPropertyOptional({ description: 'Filter by rating', minimum: 1, maximum: 5 })
+  @IsOptional()
+  @Type(() => Number)
+  @Min(1)
+  @Max(5)
+  rating?: number;
+
+  @ApiPropertyOptional({ description: 'Search in review title and comment' })
+  @IsOptional()
+  @IsString()
+  search?: string;
+
+  @ApiPropertyOptional({ description: 'Filter by review status' })
+  @IsOptional()
+  @IsString()
+  status?: string;
+
+  @ApiPropertyOptional({ default: 'created_at' })
+  @IsOptional()
+  @IsString()
+  sortBy?: string = 'created_at';
+
+  @ApiPropertyOptional({ enum: ['ASC', 'DESC'], default: 'DESC' })
+  @IsOptional()
+  @Transform(({ value }) => value?.toUpperCase())
+  @IsEnum(['ASC', 'DESC'])
+  sortOrder?: 'ASC' | 'DESC' = 'DESC';
+}
+
+export class UpdateReviewStatusDto {
+  @ApiProperty({ description: 'Review status' })
+  @IsString()
+  status: string;
+
+  @ApiPropertyOptional({ description: 'Admin notes' })
+  @IsOptional()
+  @IsString()
+  adminNotes?: string;
+}

@@ -24,7 +24,9 @@ import {
   BulkUpdateStatusDto,
   BulkDeleteDto,
   ExportQueryDto,
-  ReportFormat
+  ReportFormat,
+  AdminReviewQueryDto,
+  UpdateReviewStatusDto
 } from './dto/admin.dto';
 import { ProductImageResponseDto } from './dto/admin-product-images.dto';
 
@@ -520,6 +522,74 @@ export class AdminController {
       { downloadUrl: `/exports/products-${Date.now()}.${query.format || 'csv'}` },
       'Products data exported successfully'
     );
+  }
+
+  // ============= REVIEW MANAGEMENT ENDPOINTS =============
+  @Get('reviews')
+  @ApiOperation({ summary: 'Get all reviews with filtering and pagination' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'productId', required: false, type: String })
+  @ApiQuery({ name: 'userId', required: false, type: String })
+  @ApiQuery({ name: 'rating', required: false, type: Number })
+  @ApiQuery({ name: 'sortBy', required: false, type: String })
+  @ApiQuery({ name: 'sortOrder', required: false, enum: ['ASC', 'DESC'] })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Reviews retrieved successfully',
+    type: PaginatedResponseDto
+  })
+  async getReviews(@Query() query: AdminReviewQueryDto): Promise<PaginatedResponseDto<any>> {
+    const result = await this.adminService.getReviews(query);
+    return new PaginatedResponseDto(
+      result.data,
+      result.pagination.total,
+      result.pagination.page,
+      result.pagination.limit,
+      'Reviews retrieved successfully'
+    );
+  }
+
+  @Get('reviews/:id')
+  @ApiOperation({ summary: 'Get review by ID' })
+  @ApiParam({ name: 'id', description: 'Review ID' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Review retrieved successfully',
+    type: SuccessResponseDto
+  })
+  async getReviewById(@Param('id') id: string): Promise<SuccessResponseDto<any>> {
+    const review = await this.adminService.getReviewById(id);
+    return new SuccessResponseDto(review, 'Review retrieved successfully');
+  }
+
+  @Put('reviews/:id/status')
+  @ApiOperation({ summary: 'Update review status' })
+  @ApiParam({ name: 'id', description: 'Review ID' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Review status updated successfully',
+    type: SuccessResponseDto
+  })
+  async updateReviewStatus(
+    @Param('id') id: string,
+    @Body() updateData: UpdateReviewStatusDto
+  ): Promise<SuccessResponseDto<any>> {
+    const review = await this.adminService.updateReviewStatus(id, updateData);
+    return new SuccessResponseDto(review, 'Review status updated successfully');
+  }
+
+  @Delete('reviews/:id')
+  @ApiOperation({ summary: 'Delete review' })
+  @ApiParam({ name: 'id', description: 'Review ID' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Review deleted successfully',
+    type: SuccessResponseDto
+  })
+  async deleteReview(@Param('id') id: string): Promise<SuccessResponseDto<any>> {
+    const result = await this.adminService.deleteReview(id);
+    return new SuccessResponseDto(result, 'Review deleted successfully');
   }
 
   // ============= AUDIT LOG ENDPOINTS =============

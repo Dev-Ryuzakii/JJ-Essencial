@@ -77,28 +77,40 @@ export class ProductsController {
     return new SuccessResponseDto(result, 'Product created successfully');
   }
 
-  @Get()
-  @ApiOperation({ summary: 'Get all products with pagination and filters' })
+    @Get()
+  @ApiOperation({ summary: 'Get all products' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiQuery({ name: 'search', required: false, type: String })
   @ApiQuery({ name: 'sortBy', required: false, type: String })
-  @ApiQuery({ name: 'sortOrder', required: false, enum: ['asc', 'desc'] })
+  @ApiQuery({ name: 'sortOrder', required: false, type: String })
   @ApiQuery({ name: 'category', required: false, type: String })
   @ApiQuery({ name: 'minPrice', required: false, type: Number })
   @ApiQuery({ name: 'maxPrice', required: false, type: Number })
   @ApiQuery({ name: 'inStock', required: false, type: Boolean })
-  @ApiResponse({
-    status: 200,
-    description: 'Products retrieved successfully',
-    type: [ProductResponseDto],
-  })
+  @ApiQuery({ name: 'featured', required: false, type: Boolean })
+  @ApiResponse({ status: 200, description: 'Products retrieved successfully' })
   async findAll(
-    @Query() pagination: PaginationDto,
-    @Query() filters: ProductFilterDto,
-  ): Promise<PaginatedResponseDto<ProductResponseDto>> {
-    const { products, total } = await this.productsService.findAll(pagination, filters);
-    return new PaginatedResponseDto(products, total, pagination.page, pagination.limit);
+    @Query() query: ProductFilterDto,
+  ) {
+    // Extract pagination and filter data from combined query
+    const paginationQuery = {
+      page: query.page,
+      limit: query.limit,
+      search: query.search,
+      sortBy: query.sortBy,
+      sortOrder: query.sortOrder,
+    };
+    
+    const filterQuery = {
+      category: query.category,
+      minPrice: query.minPrice,
+      maxPrice: query.maxPrice,
+      inStock: query.inStock,
+      featured: query.featured,
+    };
+
+    return await this.productsService.findAll(paginationQuery, filterQuery);
   }
 
   @Get('categories')

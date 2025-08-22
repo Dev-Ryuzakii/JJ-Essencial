@@ -1089,6 +1089,142 @@ export class AdminService {
     }
   }
 
+  // ============= REVIEW MANAGEMENT SERVICES =============
+  async getReviews(query: any) {
+    const { 
+      page = 1, 
+      limit = 10, 
+      search, 
+      productId, 
+      userId, 
+      rating, 
+      status,
+      sortBy = 'created_at', 
+      sortOrder = 'DESC' 
+    } = query;
+    
+    const mappedSortBy = this.mapSortField(sortBy);
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+
+    try {
+      let supabaseQuery = this.supabase
+        .from('product_review')
+        .select(`
+          *,
+          profile:user_id(id, email, full_name),
+          product:product_id(id, name)
+        `, { count: 'exact' });
+
+      // Apply filters
+      if (search) {
+        supabaseQuery = supabaseQuery.or(`title.ilike.%${search}%,comment.ilike.%${search}%`);
+      }
+
+      if (productId) {
+        supabaseQuery = supabaseQuery.eq('product_id', productId);
+      }
+
+      if (userId) {
+        supabaseQuery = supabaseQuery.eq('user_id', userId);
+      }
+
+      if (rating) {
+        supabaseQuery = supabaseQuery.eq('rating', rating);
+      }
+
+      if (status) {
+        supabaseQuery = supabaseQuery.eq('status', status);
+      }
+
+      // Apply sorting and pagination
+      supabaseQuery = supabaseQuery
+        .order(mappedSortBy, { ascending: sortOrder === 'ASC' })
+        .range(from, to);
+
+      const { data: reviews, count, error } = await supabaseQuery;
+
+      if (error) throw error;
+
+      return {
+        data: reviews || [],
+        pagination: {
+          page,
+          limit,
+          total: count || 0,
+          pages: Math.ceil((count || 0) / limit)
+        }
+      };
+    } catch (error) {
+      this.logger.error('Error getting reviews:', error);
+      throw error;
+    }
+  }
+
+  async getReviewById(id: string) {
+    try {
+      const { data: review, error } = await this.supabase
+        .from('product_review')
+        .select(`
+          *,
+          profile:user_id(id, email, full_name),
+          product:product_id(id, name)
+        `)
+        .eq('id', id)
+        .single();
+
+      if (error || !review) {
+        throw new NotFoundException('Review not found');
+      }
+
+      return review;
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+      this.logger.error('Error getting review by ID:', error);
+      throw error;
+    }
+  }
+
+  async updateReviewStatus(id: string, updateData: any) {
+    try {
+      const { data: review, error } = await this.supabase
+        .from('product_review')
+        .update({
+          status: updateData.status,
+          admin_notes: updateData.adminNotes,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      if (!review) throw new NotFoundException('Review not found');
+
+      return review;
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+      this.logger.error('Error updating review status:', error);
+      throw error;
+    }
+  }
+
+  async deleteReview(id: string) {
+    try {
+      const { error } = await this.supabase
+        .from('product_review')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      return { message: 'Review deleted successfully' };
+    } catch (error) {
+      this.logger.error('Error deleting review:', error);
+      throw error;
+    }
+  }
+
   private generateUniqueId(): string {
     return Math.random().toString(36).substring(2, 15) + 
            Math.random().toString(36).substring(2, 15);

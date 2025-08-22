@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsNumber, IsArray, IsBoolean, Min } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsNumber, IsArray, IsBoolean, IsEnum, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class CreateProductDto {
@@ -140,6 +140,35 @@ export class ProductResponseDto {
 }
 
 export class ProductFilterDto {
+  // Pagination fields
+  @ApiProperty({ description: 'Page number', default: 1, required: false })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  page?: number = 1;
+
+  @ApiProperty({ description: 'Items per page', default: 10, required: false })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  limit?: number = 10;
+
+  @ApiProperty({ description: 'Search query', required: false })
+  @IsOptional()
+  @IsString()
+  search?: string;
+
+  @ApiProperty({ description: 'Sort field', required: false })
+  @IsOptional()
+  @IsString()
+  sortBy?: string;
+
+  @ApiProperty({ description: 'Sort order', enum: ['asc', 'desc'], default: 'desc', required: false })
+  @IsOptional()
+  @IsEnum(['asc', 'desc'])
+  sortOrder?: 'asc' | 'desc' = 'desc';
+
+  // Filter fields
   @ApiProperty({ required: false })
   @IsString()
   @IsOptional()
@@ -164,4 +193,10 @@ export class ProductFilterDto {
   @Type(() => Boolean)
   @IsOptional()
   inStock?: boolean;
+
+  @ApiProperty({ required: false })
+  @IsBoolean()
+  @Type(() => Boolean)
+  @IsOptional()
+  featured?: boolean;
 }

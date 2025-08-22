@@ -54,8 +54,8 @@ export class ProductsService {
   }
 
   async findAll(pagination: PaginationDto, filters: ProductFilterDto) {
-    const { page, limit, search, sortBy, sortOrder } = pagination;
-    const { category, minPrice, maxPrice, inStock } = filters;
+    const { page = 1, limit = 10, search, sortBy, sortOrder } = pagination;
+    const { category, minPrice, maxPrice, inStock, featured } = filters;
 
     const start = (page - 1) * limit;
     const end = start + limit - 1;
@@ -84,13 +84,40 @@ export class ProductsService {
     }
 
     // Add stock filter
-    if (inStock) {
-      query = query.gt('stock', 0);
+    if (inStock !== undefined) {
+      if (inStock) {
+        query = query.gt('stock', 0);
+      } else {
+        query = query.eq('stock', 0);
+      }
+    }
+
+    // Add featured filter (handle missing column gracefully)
+    if (featured !== undefined) {
+      try {
+        query = query.eq('featured', featured);
+      } catch (error) {
+        // If featured column doesn't exist, skip this filter
+        console.warn('Featured column not found, skipping featured filter');
+      }
     }
 
     // Add sorting
     if (sortBy) {
-      query = query.order(sortBy, { ascending: sortOrder === 'asc' });
+      // Map camelCase fields to database snake_case fields
+      const fieldMapping: { [key: string]: string } = {
+        'createdAt': 'created_at',
+        'updatedAt': 'updated_at',
+        'isActive': 'is_active',
+        'avgRating': 'avg_rating',
+        'reviewCount': 'review_count',
+        'lowStockThreshold': 'low_stock_threshold',
+        'categoryId': 'category_id'
+      };
+      
+      const dbField = fieldMapping[sortBy] || sortBy;
+      const orderDirection = sortOrder?.toLowerCase() === 'desc' ? false : true;
+      query = query.order(dbField, { ascending: orderDirection });
     } else {
       query = query.order('created_at', { ascending: false });
     }
@@ -283,10 +310,11 @@ export class ProductsService {
       price: parseFloat(product.price.toString()),
       stock: product.stock,
       images: product.images,
-      category: product.category,
-      isActive: product.isActive,
-      createdAt: product.createdAt,
-      updatedAt: product.updatedAt,
+      category: product.category || null,
+      featured: product.featured || false, // Default to false if column doesn't exist
+      isActive: product.is_active,
+      createdAt: product.created_at,
+      updatedAt: product.updated_at,
     };
   }
 }
