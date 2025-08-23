@@ -498,6 +498,59 @@ export class AdminController {
     return new SuccessResponseDto(updatedSettings, 'Settings updated successfully');
   }
 
+  @Get('settings/bank-accounts')
+  @ApiOperation({ summary: 'Get bank accounts for payments' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Bank accounts retrieved successfully',
+    type: SuccessResponseDto
+  })
+  async getBankAccounts(): Promise<SuccessResponseDto<any>> {
+    const bankAccounts = await this.adminService.getBankAccounts();
+    return new SuccessResponseDto(bankAccounts, 'Bank accounts retrieved successfully');
+  }
+
+  @Post('settings/bank-accounts')
+  @ApiOperation({ summary: 'Add new bank account' })
+  @ApiResponse({ 
+    status: 201, 
+    description: 'Bank account added successfully',
+    type: SuccessResponseDto
+  })
+  async addBankAccount(@Body() bankAccountData: any): Promise<SuccessResponseDto<any>> {
+    const bankAccount = await this.adminService.addBankAccount(bankAccountData);
+    return new SuccessResponseDto(bankAccount, 'Bank account added successfully');
+  }
+
+  @Put('settings/bank-accounts/:id')
+  @ApiOperation({ summary: 'Update bank account' })
+  @ApiParam({ name: 'id', description: 'Bank account ID' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Bank account updated successfully',
+    type: SuccessResponseDto
+  })
+  async updateBankAccount(
+    @Param('id') id: string,
+    @Body() bankAccountData: any
+  ): Promise<SuccessResponseDto<any>> {
+    const bankAccount = await this.adminService.updateBankAccount(id, bankAccountData);
+    return new SuccessResponseDto(bankAccount, 'Bank account updated successfully');
+  }
+
+  @Delete('settings/bank-accounts/:id')
+  @ApiOperation({ summary: 'Delete bank account' })
+  @ApiParam({ name: 'id', description: 'Bank account ID' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Bank account deleted successfully',
+    type: SuccessResponseDto
+  })
+  async deleteBankAccount(@Param('id') id: string): Promise<SuccessResponseDto<any>> {
+    const result = await this.adminService.deleteBankAccount(id);
+    return new SuccessResponseDto(result, 'Bank account deleted successfully');
+  }
+
   // ============= EXPORT ENDPOINTS =============
   @Get('export/users')
   @ApiOperation({ summary: 'Export users data' })

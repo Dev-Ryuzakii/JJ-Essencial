@@ -516,10 +516,70 @@ export class AdminSettingsDto {
   @IsString()
   faviconUrl?: string;
 
+  @ApiPropertyOptional({ description: 'Maintenance mode status', default: false })
+  @IsOptional()
+  @IsBoolean()
+  maintenanceMode?: boolean;
+
   @ApiPropertyOptional({ description: 'Enable user registration', default: true })
   @IsOptional()
   @IsBoolean()
   allowRegistration?: boolean;
+
+  @ApiPropertyOptional({ description: 'Enable email notifications', default: true })
+  @IsOptional()
+  @IsBoolean()
+  emailNotifications?: boolean;
+
+  @ApiPropertyOptional({ description: 'Enable SMS notifications', default: false })
+  @IsOptional()
+  @IsBoolean()
+  smsNotifications?: boolean;
+
+  @ApiPropertyOptional({ description: 'Auto-confirm orders', default: false })
+  @IsOptional()
+  @IsBoolean()
+  orderAutoConfirm?: boolean;
+
+  @ApiPropertyOptional({ description: 'Low stock threshold', minimum: 1 })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  lowStockThreshold?: number;
+
+  @ApiPropertyOptional({ description: 'Tax rate percentage', minimum: 0, maximum: 100 })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  taxRate?: number;
+
+  @ApiPropertyOptional({ description: 'Shipping fee amount', minimum: 0 })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  shippingFee?: number;
+
+  @ApiPropertyOptional({ description: 'Free shipping threshold amount', minimum: 0 })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  freeShippingThreshold?: number;
+
+  @ApiPropertyOptional({ description: 'Default language code' })
+  @IsOptional()
+  @IsString()
+  defaultLanguage?: string;
+
+  @ApiPropertyOptional({ description: 'Date format preference' })
+  @IsOptional()
+  @IsString()
+  dateFormat?: string;
+
+  @ApiPropertyOptional({ description: 'Time format preference' })
+  @IsOptional()
+  @IsString()
+  timeFormat?: string;
 
   @ApiPropertyOptional({ description: 'Require email verification', default: true })
   @IsOptional()
