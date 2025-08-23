@@ -6,6 +6,7 @@ import { AdminOnly } from '../../common/decorators/admin.decorator';
 import { UserId } from '../../common/decorators/user.decorator';
 import { SuccessResponseDto, PaginatedResponseDto } from '../../common/dto/common.dto';
 import { AdminService } from './admin.service';
+import { CustomerSupportService } from '../customer-support/customer-support.service';
 import {
   DashboardStatsDto,
   AdminUserQueryDto,
@@ -36,7 +37,10 @@ import { ProductImageResponseDto } from './dto/admin-product-images.dto';
 @AdminOnly()
 @ApiBearerAuth()
 export class AdminController {
-  constructor(private readonly adminService: AdminService) {}
+  constructor(
+    private readonly adminService: AdminService,
+    private readonly customerSupportService: CustomerSupportService,
+  ) {}
 
   // ============= DASHBOARD ENDPOINTS =============
   @Get('dashboard/stats')
@@ -49,6 +53,20 @@ export class AdminController {
   async getDashboardStats(): Promise<SuccessResponseDto<DashboardStatsDto>> {
     const stats = await this.adminService.getDashboardStats();
     return new SuccessResponseDto(stats, 'Dashboard statistics retrieved successfully');
+  }
+
+  @Get('dashboard/user-stats')
+  @ApiOperation({ summary: 'Get user statistics for dashboard' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'User statistics retrieved successfully',
+    type: SuccessResponseDto<DashboardStatsDto>
+  })
+  async getUserStats(): Promise<SuccessResponseDto<DashboardStatsDto>> {
+    // For now, return the same dashboard stats
+    // This can be customized later for user-specific statistics
+    const stats = await this.adminService.getDashboardStats();
+    return new SuccessResponseDto(stats, 'User statistics retrieved successfully');
   }
 
   // ============= USER MANAGEMENT ENDPOINTS =============
@@ -609,5 +627,93 @@ export class AdminController {
       query.limit || 10,
       'Audit logs retrieved successfully'
     );
+  }
+
+  // ============= SUPPORT TICKET ENDPOINTS =============
+  @Get('support/tickets')
+  @ApiOperation({ summary: 'Get all support tickets (chats) with filtering and pagination' })
+  @ApiQuery({ name: 'page', required: false, type: Number, description: 'Page number' })
+  @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Items per page' })
+  @ApiQuery({ name: 'status', required: false, type: String, description: 'Ticket status filter' })
+  @ApiQuery({ name: 'priority', required: false, type: String, description: 'Ticket priority filter' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Support tickets retrieved successfully',
+    type: PaginatedResponseDto
+  })
+  async getTickets(
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '20',
+    @Query('status') status?: string,
+    @Query('priority') priority?: string,
+  ): Promise<SuccessResponseDto<any>> {
+    try {
+      const tickets = await this.customerSupportService.getAllChats(
+        parseInt(page),
+        parseInt(limit),
+        status as any,
+        priority as any,
+      );
+      return new SuccessResponseDto(tickets, 'Support tickets retrieved successfully');
+    } catch (error) {
+      throw new Error('Failed to fetch support tickets');
+    }
+  }
+
+  @Get('support/tickets/:id')
+  @ApiOperation({ summary: 'Get support ticket details' })
+  @ApiParam({ name: 'id', description: 'Ticket ID' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Support ticket retrieved successfully',
+    type: SuccessResponseDto
+  })
+  async getTicket(@Param('id') id: string): Promise<SuccessResponseDto<any>> {
+    const ticket = await this.customerSupportService.getChatDetails(id);
+    return new SuccessResponseDto(ticket, 'Support ticket retrieved successfully');
+  }
+
+  @Put('support/tickets/:id/status')
+  @ApiOperation({ summary: 'Update support ticket status' })
+  @ApiParam({ name: 'id', description: 'Ticket ID' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Support ticket status updated successfully',
+    type: SuccessResponseDto
+  })
+  async updateTicketStatus(
+    @Param('id') id: string,
+    @Body() updateData: { status: string; notes?: string }
+  ): Promise<SuccessResponseDto<any>> {
+    const ticket = await this.customerSupportService.updateChatStatus(id, updateData as any);
+    return new SuccessResponseDto(ticket, 'Support ticket status updated successfully');
+  }
+
+  @Put('support/tickets/:id/assign')
+  @ApiOperation({ summary: 'Assign support ticket to support staff' })
+  @ApiParam({ name: 'id', description: 'Ticket ID' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Support ticket assigned successfully',
+    type: SuccessResponseDto
+  })
+  async assignTicket(
+    @Param('id') id: string,
+    @Body() assignData: { supportUserId: string }
+  ): Promise<SuccessResponseDto<any>> {
+    const ticket = await this.customerSupportService.assignChatToSupport(id, assignData.supportUserId);
+    return new SuccessResponseDto(ticket, 'Support ticket assigned successfully');
+  }
+
+  @Get('support/stats')
+  @ApiOperation({ summary: 'Get support ticket statistics' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Support statistics retrieved successfully',
+    type: SuccessResponseDto
+  })
+  async getSupportStats(): Promise<SuccessResponseDto<any>> {
+    const stats = await this.customerSupportService.getChatStats();
+    return new SuccessResponseDto(stats, 'Support statistics retrieved successfully');
   }
 }

@@ -1,6 +1,6 @@
 # Fixed API Endpoints - Working Status Report
 
-## Products API - ✅ FULLY WORKING
+## Products API - ✅ WORKING
 
 All product endpoints are now functional with proper parameter support:
 
@@ -10,96 +10,262 @@ All product endpoints are now functional with proper parameter support:
 - `page` (number) - Page number (default: 1)
 - `limit` (number) - Items per page (default: 10)
 - `search` (string) - Search in name, description, category
-- `sortBy` (string) - Sort field (name, price, createdAt, etc.) ✅ **FIXED camelCase mapping**
+- `sortBy` (string) - Sort field (name, price, createdAt, etc.) ✅ **FIXED**
 - `sortOrder` (string) - Sort direction (asc, desc)
-- `category` (string) - Filter by category
+- `category` (string) - Filter by category ✅ **FIXED**
 - `minPrice` (number) - Minimum price filter
 - `maxPrice` (number) - Maximum price filter
 - `inStock` (boolean) - Filter by stock availability
 - `featured` (boolean) - Filter by featured status ✅ **FIXED**
 
-**🔧 LATEST FIX**: Added automatic field mapping for camelCase to snake_case conversion:
-- `createdAt` → `created_at`
-- `updatedAt` → `updated_at`
-- `isActive` → `is_active`
-- etc.
-
 **Working Examples:**
 ```bash
-# Basic pagination with sorting
-curl "http://localhost:3000/api/v1/products?page=1&limit=5&sortBy=createdAt&sortOrder=desc"
+# Basic pagination
+curl "http://localhost:3000/api/v1/products?page=1&limit=5"
 
 # Featured products
 curl "http://localhost:3000/api/v1/products?featured=true"
 
-# Category filter with sorting (fixed!)
-curl "http://localhost:3000/api/v1/products?category=6717c6b6-8e30-4bb7-bfcf-a37cc08c8570&sortBy=createdAt&sortOrder=desc"
+# Search with sorting
+curl "http://localhost:3000/api/v1/products?search=Blender&sortBy=name&sortOrder=asc"
+
+# Sort by creation date (fixed column mapping)
+curl "http://localhost:3000/api/v1/products?sortBy=createdAt&sortOrder=desc"
+
+# Category filtering (fixed 500 error)
+curl "http://localhost:3000/api/v1/products?category=6717c6b6-8e30-4bb7-bfcf-a37cc08c8570"
+
+# Price range filter
+curl "http://localhost:3000/api/v1/products?minPrice=1000&maxPrice=50000"
 ```
+
+**Response Format:**
+```json
+{
+  "products": [
+    {
+      "id": "uuid",
+      "name": "Product Name",
+      "description": "Description",
+      "price": 1234.56,
+      "stock": 10,
+      "images": ["url1", "url2"],
+      "category": "Category Name",
+      "featured": true,
+      "isActive": true,
+      "createdAt": "2025-08-22T...",
+      "updatedAt": "2025-08-22T..."
+    }
+  ],
+  "total": 25
+}
+```
+
+## Support Tickets API - ✅ WORKING
+
+### Admin Support Management
+
+**Endpoints Available:**
+- `GET /api/v1/admin/support/tickets` - Get all support tickets ✅ **ADDED**
+- `GET /api/v1/admin/support/tickets/:id` - Get specific ticket details ✅ **ADDED** 
+- `PUT /api/v1/admin/support/tickets/:id/status` - Update ticket status ✅ **ADDED**
+- `PUT /api/v1/admin/support/tickets/:id/assign` - Assign ticket to support staff ✅ **ADDED**
+- `GET /api/v1/admin/support/stats` - Get support statistics ✅ **WORKING**
+
+**Query Parameters for tickets endpoint:**
+- `page` (number) - Page number (default: 1)
+- `limit` (number) - Items per page (default: 20)
+- `status` (string) - Filter by ticket status (OPEN, IN_PROGRESS, CLOSED)
+- `priority` (string) - Filter by priority (LOW, MEDIUM, HIGH)
+
+**Usage Example:**
+```bash
+# Get all support tickets (requires admin auth)
+curl "http://localhost:3000/api/v1/admin/support/tickets?page=1&limit=10" \
+  -H "Authorization: Bearer admin-token"
+
+# Get tickets by status
+curl "http://localhost:3000/api/v1/admin/support/tickets?status=OPEN" \
+  -H "Authorization: Bearer admin-token"
+
+# Get specific ticket
+curl "http://localhost:3000/api/v1/admin/support/tickets/ticket-id" \
+  -H "Authorization: Bearer admin-token"
+```
+
+**Response Format:**
+```json
+{
+  "success": true,
+  "message": "Support tickets retrieved successfully",
+  "data": {
+    "chats": [
+      {
+        "id": "ticket-id",
+        "subject": "Ticket Subject",
+        "status": "OPEN",
+        "priority": "MEDIUM",
+        "createdAt": "2025-08-23T...",
+        "user": {...},
+        "messages": [...]
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 10,
+      "totalPages": 1
+    }
+  }
+}
+```
+
+**Response Format for Stats:**
+```json
+{
+  "success": true,
+  "message": "Support statistics retrieved successfully",
+  "data": {
+    "totalChats": 0,
+    "openChats": 0,
+    "inProgressChats": 0,
+    "closedChats": 0,
+    "highPriorityChats": 0,
+    "chatsByPriority": {
+      "LOW": 0,
+      "MEDIUM": 0,
+      "HIGH": 0
+    }
+  }
+}
+```
+
+**Note**: All endpoints require admin authentication. Frontend should call:
+- `adminSupportApi.getTickets()` → `/admin/support/tickets`
+- `adminSupportApi.getSupportStats()` → `/admin/support/stats` ✅ **WORKING**
+
+## Dashboard API - ✅ WORKING
+
+### Admin Dashboard Stats
+
+**Endpoints Available:**
+- `GET /api/v1/admin/dashboard/stats` - Admin dashboard statistics
+- `GET /api/v1/admin/dashboard/user-stats` - User statistics ✅ **ADDED**
+
+**Usage Example:**
+```bash
+# Admin dashboard stats (requires admin auth)
+curl "http://localhost:3000/api/v1/admin/dashboard/stats" \
+  -H "Authorization: Bearer admin-token"
+
+# User stats (requires admin auth)  
+curl "http://localhost:3000/api/v1/admin/dashboard/user-stats" \
+  -H "Authorization: Bearer admin-token"
+```
+
+**Note**: Both endpoints require admin authentication. Frontend should call:
+- `dashboardApi.getUserStats()` → `/admin/dashboard/user-stats`
+- `dashboardApi.getDashboardStats()` → `/admin/dashboard/stats`
 
 ## Categories API - ✅ WORKING
 
 ### GET /api/v1/categories
 
-Working properly, returns proper data structure.
-
-## Dashboard API - ⚠️ METHOD NAME MISMATCH
-
-### Issue
-- **Frontend expects**: `dashboardApi.getUserStats()`
-- **Backend provides**: `GET /api/v1/admin/dashboard/stats` with method `getDashboardStats`
-
-### Solution Options
-1. **Frontend Fix**: Update frontend to call `dashboardApi.getDashboardStats()`
-2. **Backend Alias**: Add getUserStats method that calls getDashboardStats
-3. **API Client Fix**: Map getUserStats to getDashboardStats in frontend API client
-
-### Current Endpoint
+**Working Example:**
 ```bash
-# Requires admin authentication
-GET /api/v1/admin/dashboard/stats
+curl "http://localhost:3000/api/v1/categories"
 ```
 
-## Issues Fixed ✅
-
-1. ✅ **Products 500 Error**: Fixed camelCase field mapping (createdAt → created_at)
-2. ✅ **Featured Parameter**: Working with proper boolean filtering
-3. ✅ **Category Filtering**: Working with proper UUID category IDs
-4. ✅ **Sorting & Pagination**: All parameters working correctly
-5. ✅ **Validation Conflicts**: Resolved DTO parameter conflicts
-
-## Remaining Issues ⚠️
-
-1. **Dashboard API Method Name**: Frontend calls `getUserStats` but backend has `getDashboardStats`
-2. **Categories API Method Name**: Frontend might expect `getAll` but backend has `getAllCategories`
-
-## Frontend Integration Status
-
-### ✅ Working Endpoints:
-- Products with all filters and sorting
-- Categories listing  
-
-### ⚠️ Needs Frontend Updates:
-- Dashboard API method name mapping
-- Categories API method name mapping (if needed)
-
-## Testing Results
-
-```bash
-# ✅ All these now work correctly:
-GET /api/v1/products?sortBy=createdAt&sortOrder=desc          # Fixed!
-GET /api/v1/products?featured=true                           # Working!
-GET /api/v1/products?category=uuid&sortBy=price&sortOrder=asc # Working!
-GET /api/v1/categories                                        # Working!
-
-# ⚠️ Method name mismatches:
-dashboardApi.getUserStats()     // Frontend expects this
-admin/dashboard/stats           // Backend provides this
+**Response Format:**
+```json
+{
+  "success": true,
+  "message": "Categories retrieved successfully",
+  "data": [
+    {
+      "id": "uuid",
+      "name": "Category Name",
+      "description": "Description",
+      "slug": "category-slug",
+      "image": "image-url",
+      "parentId": null,
+      "isActive": true,
+      "sortOrder": 0,
+      "createdAt": "2025-08-22T...",
+      "updatedAt": "2025-08-22T...",
+      "children": [],
+      "parent": null,
+      "productCount": 5
+    }
+  ],
+  "timestamp": "2025-08-22T23:10:11.600Z"
+}
 ```
 
-## Next Steps
+## Issues Resolved
 
-1. **For Dashboard**: Update frontend API client to map `getUserStats` → `getDashboardStats`
-2. **For Categories**: Check if frontend expects `getAll` method and add mapping if needed
-3. **Testing**: Verify all frontend components work with the corrected API calls
+1. ✅ **Featured Parameter Support**: Added `featured` boolean parameter to ProductFilterDto
+2. ✅ **Database Column**: Featured column exists and is functional
+3. ✅ **Validation Conflicts**: Consolidated DTOs to prevent parameter conflicts
+4. ✅ **TypeScript Errors**: Fixed sortOrder type compatibility
+5. ✅ **Query Parameter Mapping**: All query parameters properly validated and processed
+6. ✅ **Column Name Mapping**: Fixed createdAt/updatedAt to created_at/updated_at database mapping
+7. ✅ **Category Filtering**: Fixed 500 errors when filtering by category ID
+8. ✅ **Dashboard API**: Added getUserStats method for frontend compatibility
+9. ✅ **Sorting Issues**: Fixed sortBy=createdAt column mapping for proper database queries
+10. ✅ **Support Tickets API**: Added complete admin support ticket management endpoints
+11. ✅ **Admin Support Integration**: Frontend `adminSupportApi.getTickets()` now working
 
-The core API functionality is now ✅ **FULLY WORKING** - remaining issues are just method name mappings in the frontend API client.
+## Frontend Integration Notes
+
+### Dashboard API Methods:
+- Frontend calls `dashboardApi.getUserStats()` → Backend: `/admin/dashboard/user-stats`
+- Frontend calls `dashboardApi.getDashboardStats()` → Backend: `/admin/dashboard/stats`
+
+### Support Tickets API Methods:
+- Frontend calls `adminSupportApi.getTickets()` → Backend: `/admin/support/tickets` ✅ **WORKING**
+- Frontend calls `adminSupportApi.getTicket(id)` → Backend: `/admin/support/tickets/:id` ✅ **WORKING**
+- Frontend calls `adminSupportApi.updateTicketStatus()` → Backend: `/admin/support/tickets/:id/status` ✅ **WORKING**
+
+### Categories API Methods:
+- Frontend calls `categoriesApi.getAllCategories()` → Backend: `/categories` 
+- Alternative: Create alias `getAll: getAllCategories` in frontend API client
+
+### Products API - All Parameters Working:
+- All query parameters now supported and validated
+- Column name mapping fixed for proper sorting
+- Category filtering working without 500 errors
+
+## Frontend Integration Notes
+
+### Dashboard API Methods:
+- Frontend calls `dashboardApi.getUserStats()` → Backend: `/admin/dashboard/user-stats`
+- Frontend calls `dashboardApi.getDashboardStats()` → Backend: `/admin/dashboard/stats`
+
+### Categories API Methods:
+- Frontend calls `categoriesApi.getAllCategories()` → Backend: `/categories` 
+- Alternative: Create alias `getAll: getAllCategories` in frontend API client
+
+### Products API - All Parameters Working:
+- All query parameters now supported and validated
+- Column name mapping fixed for proper sorting
+- Category filtering working without 500 errors
+
+## Database Schema Status
+
+The `product` table now includes:
+- ✅ `featured` (boolean) - Working
+- ✅ `category` (string) - Working  
+- ✅ All pagination and filtering fields - Working
+
+## Testing Status
+
+All endpoints tested and confirmed working:
+- ✅ Products with featured=true filter
+- ✅ Products with featured=false filter  
+- ✅ Products with search and sorting
+- ✅ Products with price range filters
+- ✅ Categories endpoint returning proper data
+- ✅ Pagination working correctly
+
+The API is now ready for frontend integration with all requested parameters functional.

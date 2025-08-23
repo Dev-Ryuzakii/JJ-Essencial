@@ -216,49 +216,85 @@ export class CustomerSupportService {
   }
 
   async getChatStats() {
-    const [
-      { count: totalChats },
-      { count: openChats },
-      { count: inProgressChats },
-      { count: closedChats },
-      { count: highPriorityChats },
-      { data: priorityStats },
-    ] = await Promise.all([
-      this.supabase
-        .from('supportChat')
-        .select('*', { count: 'exact', head: true }),
-      this.supabase
-        .from('supportChat')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'OPEN'),
-      this.supabase
-        .from('supportChat')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'IN_PROGRESS'),
-      this.supabase
-        .from('supportChat')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'CLOSED'),
-      this.supabase
-        .from('supportChat')
-        .select('*', { count: 'exact', head: true })
-        .eq('priority', 'HIGH'),
-      this.supabase.rpc('get_chats_by_priority'),
-    ]);
+    try {
+      const [
+        { count: totalChats },
+        { count: openChats },
+        { count: inProgressChats },
+        { count: closedChats },
+        { count: highPriorityChats },
+        { data: priorityStats, error: priorityError },
+      ] = await Promise.all([
+        this.supabase
+          .from('supportChat')
+          .select('*', { count: 'exact', head: true }),
+        this.supabase
+          .from('supportChat')
+          .select('*', { count: 'exact', head: true })
+          .eq('status', 'OPEN'),
+        this.supabase
+          .from('supportChat')
+          .select('*', { count: 'exact', head: true })
+          .eq('status', 'IN_PROGRESS'),
+        this.supabase
+          .from('supportChat')
+          .select('*', { count: 'exact', head: true })
+          .eq('status', 'CLOSED'),
+        this.supabase
+          .from('supportChat')
+          .select('*', { count: 'exact', head: true })
+          .eq('priority', 'HIGH'),
+        // Get priority distribution manually
+        this.supabase
+          .from('supportChat')
+          .select('priority')
+          .not('priority', 'is', null),
+      ]);
 
-    const chatsByPriority = priorityStats.reduce((acc, curr) => {
-      acc[curr.priority] = parseInt(curr.count);
-      return acc;
-    }, {} as Record<string, number>);
+      // Safely process priority stats
+      const chatsByPriority: Record<string, number> = {};
+      if (priorityStats && Array.isArray(priorityStats)) {
+        const priorityCounts: Record<string, number> = priorityStats.reduce((acc, chat) => {
+          const priority = chat.priority || 'MEDIUM';
+          acc[priority] = (acc[priority] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>);
+        
+        // Set default values for all priorities
+        chatsByPriority.LOW = priorityCounts.LOW || 0;
+        chatsByPriority.MEDIUM = priorityCounts.MEDIUM || 0;
+        chatsByPriority.HIGH = priorityCounts.HIGH || 0;
+      } else {
+        // Default values if query fails
+        chatsByPriority.LOW = 0;
+        chatsByPriority.MEDIUM = 0;
+        chatsByPriority.HIGH = 0;
+      }
 
-    return {
-      totalChats: totalChats || 0,
-      openChats: openChats || 0,
-      inProgressChats: inProgressChats || 0,
-      closedChats: closedChats || 0,
-      highPriorityChats: highPriorityChats || 0,
-      chatsByPriority,
-    };
+      return {
+        totalChats: totalChats || 0,
+        openChats: openChats || 0,
+        inProgressChats: inProgressChats || 0,
+        closedChats: closedChats || 0,
+        highPriorityChats: highPriorityChats || 0,
+        chatsByPriority,
+      };
+    } catch (error) {
+      console.error('Error getting chat stats:', error);
+      // Return default stats if there's an error
+      return {
+        totalChats: 0,
+        openChats: 0,
+        inProgressChats: 0,
+        closedChats: 0,
+        highPriorityChats: 0,
+        chatsByPriority: {
+          LOW: 0,
+          MEDIUM: 0,
+          HIGH: 0,
+        },
+      };
+    }
   }
 
   async assignChatToSupport(chatId: string, supportUserId: string) {

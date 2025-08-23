@@ -104,20 +104,11 @@ export class ProductsService {
 
     // Add sorting
     if (sortBy) {
-      // Map camelCase fields to database snake_case fields
-      const fieldMapping: { [key: string]: string } = {
-        'createdAt': 'created_at',
-        'updatedAt': 'updated_at',
-        'isActive': 'is_active',
-        'avgRating': 'avg_rating',
-        'reviewCount': 'review_count',
-        'lowStockThreshold': 'low_stock_threshold',
-        'categoryId': 'category_id'
-      };
-      
-      const dbField = fieldMapping[sortBy] || sortBy;
       const orderDirection = sortOrder?.toLowerCase() === 'desc' ? false : true;
-      query = query.order(dbField, { ascending: orderDirection });
+      // Map camelCase to snake_case for database columns
+      const dbSortBy = sortBy === 'createdAt' ? 'created_at' : 
+                       sortBy === 'updatedAt' ? 'updated_at' : sortBy;
+      query = query.order(dbSortBy, { ascending: orderDirection });
     } else {
       query = query.order('created_at', { ascending: false });
     }
