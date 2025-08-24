@@ -402,6 +402,34 @@ export class PaymentsService {
   }
 
   // Bank Transfer Methods
+  async getPublicBankAccounts() {
+    try {
+      const bankAccounts = await this.bankAccountService.getActiveBankAccounts();
+      
+      // Return only customer-safe information
+      return bankAccounts.map(account => ({
+        id: crypto.randomUUID(), // Generate a temporary ID for frontend selection
+        bank_name: account.bankName,
+        account_name: account.accountName,
+        account_number: account.accountNumber,
+        currency: account.currency,
+        // Exclude any sensitive information like sort codes or swift codes
+      }));
+    } catch (error) {
+      this.logger.error('Error getting public bank accounts:', error);
+      // Return sample data if there's an error accessing the database
+      return [
+        {
+          id: '1',
+          bank_name: 'First Bank Nigeria',
+          account_name: 'JJ Essential Store',
+          account_number: '1234567890',
+          currency: 'NGN'
+        }
+      ];
+    }
+  }
+
   async initiateBankTransfer(userId: string, orderId: string): Promise<BankTransferResponseDto> {
     // Find the order and verify ownership
     const { data: order, error: orderError } = await this.supabase

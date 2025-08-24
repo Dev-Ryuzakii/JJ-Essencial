@@ -156,7 +156,7 @@ export class OrdersService {
     const { data: orders, count: total, error } = await query;
 
     return {
-      orders: orders.map(this.formatOrder),
+      orders: (orders || []).map(this.formatOrder),
       total,
     };
   }
@@ -366,7 +366,7 @@ export class OrdersService {
       receiptUrl: order.receiptUrl,
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
-      orderItems: order.orderItems.map(item => ({
+      orderItems: (order.orderItems || []).map(item => ({
         id: item.id,
         productId: item.productId,
         quantity: item.quantity,

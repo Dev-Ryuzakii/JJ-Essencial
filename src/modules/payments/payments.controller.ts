@@ -141,6 +141,18 @@ export class PaymentsController {
   }
 
   // Bank Transfer Endpoints
+  @Get('bank-accounts')
+  @ApiOperation({ summary: 'Get bank accounts for manual transfers (Public)' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Bank accounts retrieved successfully',
+    type: SuccessResponseDto
+  })
+  async getPublicBankAccounts(): Promise<SuccessResponseDto<any>> {
+    const bankAccounts = await this.paymentsService.getPublicBankAccounts();
+    return new SuccessResponseDto(bankAccounts, 'Bank accounts retrieved successfully');
+  }
+
   @Post('bank-transfer/initiate')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

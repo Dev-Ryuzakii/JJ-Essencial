@@ -188,7 +188,7 @@ export class ReviewsService {
 
     return {
       reviews: (reviews || []).map(review => this.mapToResponseDto(review)),
-      total: total || 0,
+      total,
     };
   }
 
@@ -215,7 +215,7 @@ export class ReviewsService {
 
     return {
       reviews: (reviews || []).map(review => this.mapToResponseDto(review)),
-      total: total || 0,
+      total,
     };
   }
 
