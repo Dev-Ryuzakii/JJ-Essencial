@@ -27,8 +27,8 @@ async function bootstrap() {
     key: supabaseKey ? 'Found' : 'Missing'
   });
 
-  // Get configuration
-  const port = configService.get('app.port') || 3000;
+  // Use Render's dynamic port or fallback
+  const port = process.env.PORT || configService.get('app.port') || 3000;
   const apiPrefix = configService.get('app.apiPrefix') || 'api/v1';
   const allowedOrigins = configService.get('app.allowedOrigins') || ['http://localhost:3000'];
 
@@ -69,7 +69,7 @@ async function bootstrap() {
     .addTag('Products', 'Product management and catalog')
     .addTag('Orders', 'Order management and tracking')
     .addTag('Payments', 'Payment processing with Paystack and Flutterwave')
-    .addServer(`http://localhost:${port}`, 'Local development server')
+    .addServer(`/${apiPrefix}`, 'Relative API path')
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
@@ -81,7 +81,8 @@ async function bootstrap() {
     },
   });
 
-  await app.listen(port);
+ 
+  await app.listen(port, '0.0.0.0');
 
   logger.log(`🚀 Application is running on: http://localhost:${port}/${apiPrefix}`);
   logger.log(`📚 API Documentation available at: http://localhost:${port}/${apiPrefix}/docs`);
