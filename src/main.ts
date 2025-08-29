@@ -30,19 +30,26 @@ async function bootstrap() {
   // Use Render's dynamic port or fallback
   const port = process.env.PORT || configService.get('app.port') || 3000;
   const apiPrefix = configService.get('app.apiPrefix') || 'api/v1';
-  const allowedOrigins = configService.get('app.allowedOrigins') || ['http://localhost:3000'];
+
+  // CORS configuration with specific origins
+  const corsOptions = {
+    origin: [
+      'https://essentialbyjay-nu.vercel.app',
+      'https://*.vercel.app',  // All Vercel domains
+      'http://localhost:5173', // Development
+      'http://localhost:3000'  // Alternative development
+    ],
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  };
 
   // Security middleware
   app.use(helmet());
   app.use(compression());
 
-  // CORS configuration
-  app.use(cors({
-    origin: allowedOrigins,
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
-  }));
+  // Apply CORS configuration
+  app.use(cors(corsOptions));
 
   // Global API prefix
   app.setGlobalPrefix(apiPrefix);
