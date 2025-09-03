@@ -34,6 +34,8 @@ export class AuthService {
 
   async signUp(signUpDto: SignUpDto): Promise<AuthResponseDto> {
     const { email, password, fullName } = signUpDto;
+    
+    this.logger.log(`Starting signup process for: ${email}`);
 
     // Check if user already exists in our database
     const { data: existingProfile, error: profileError } = await this.supabase
@@ -42,51 +44,14 @@ export class AuthService {
       .eq('email', email)
       .single();
 
-    // Also check if user exists in Supabase Auth
-    const { data: supabaseUser, error: searchError } = await this.supabase.auth.admin.listUsers({
-      filter: {
-        email: email,
-      },
-    });
-
-    this.logger.log(`Checking if user exists in Supabase: ${email}`);
-    this.logger.log(`Supabase users found: ${supabaseUser?.users?.length || 0}`);
-    
-    const existsInSupabase = supabaseUser?.users?.length > 0;
-    
     if (existingProfile) {
-      // User exists in our database
-      this.logger.log(`User exists in local database: ${email}`);
-      
-      if (!existsInSupabase) {
-        // User exists in our database but not in Supabase - this is an inconsistency
-        this.logger.warn(`Inconsistency detected: User ${email} exists in local database but not in Supabase Auth`);
-        
-        // Delete the inconsistent profile and allow new signup
-        const { error: deleteError } = await this.supabase
-          .from('profile')
-          .delete()
-          .eq('email', email);
-        
-        if (deleteError) {
-          this.logger.error(`Failed to delete inconsistent profile: ${deleteError.message}`);
-          throw new ConflictException('Failed to resolve database inconsistency');
-        }
-        
-        this.logger.log(`Deleted inconsistent profile for ${email}`);
-      } else {
-        throw new ConflictException('User with this email already exists');
-      }
+      this.logger.log(`User already exists in database: ${email}`);
+      throw new ConflictException('User with this email already exists');
     }
     
-    if (existsInSupabase) {
-      // User exists in Supabase Auth but not in our database - this is an inconsistency
-      this.logger.warn(`Inconsistency detected: User ${email} exists in Supabase Auth but not in local database`);
-      
-      // Option: You could automatically create the local profile here
-      // or you could delete the Supabase auth user to maintain consistency
-      
-      throw new ConflictException('User with this email already exists in authentication system');
+    if (profileError && profileError.code !== 'PGRST116') {
+      this.logger.error(`Database error checking profile: ${profileError.message}`);
+      throw new ConflictException('Error checking user existence');
     }
 
     try {
