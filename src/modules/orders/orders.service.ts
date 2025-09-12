@@ -21,7 +21,7 @@ export class OrdersService {
       .from('product')
       .select('*')
       .in('id', productIds)
-      .eq('isActive', true);
+      .eq('is_active', true);  // Fixed: was 'isActive', should be 'is_active'
 
     if (!products || products.length !== productIds.length) {
       throw new BadRequestException('One or more products not found or inactive');
@@ -43,7 +43,7 @@ export class OrdersService {
         .select('*')
         .eq('id', savedAddressId)
         .eq('userId', userId)
-        .eq('isActive', true)
+        .eq('is_active', true)  // Fixed: should be 'is_active'
         .single();
       
       if (savedAddress) {
@@ -59,55 +59,71 @@ export class OrdersService {
       totalAmount += itemTotal;
       
       return {
-        productId: item.productId,
+        product_id: item.productId,  // Fixed: snake_case
         quantity: item.quantity,
-        price: parseFloat(product.price.toString()),
+        price: parseFloat(product.price.toString()),  // Fixed: use 'price' not 'unitPrice'
       };
     });
 
-    // Create order and update stock in a transaction
-    const { data: order, error } = await this.supabase.rpc('create_order', {
-      p_user_id: userId,
-      p_address_id: addressId,
-      p_total_amount: totalAmount,
-      p_delivery_phone: deliveryAddress.phone,
-      p_delivery_address: deliveryAddress.address,
-      p_delivery_city: deliveryAddress.city,
-      p_delivery_state: deliveryAddress.state,
-      p_delivery_postal: deliveryAddress.postalCode,
-      p_delivery_country: deliveryAddress.country,
-      p_order_notes: orderNotes,
-      p_order_items: orderItems
-    });
+    // Create order directly in the database with correct snake_case schema
+    const { data: order, error: orderError } = await this.supabase
+      .from('orders')
+      .insert({
+        user_id: userId,                              // Fixed: snake_case
+        total_amount: totalAmount,                    // Fixed: snake_case
+        status: 'PENDING',                           // Fixed: uppercase status
+        payment_status: 'PENDING',                   // Fixed: snake_case & uppercase
+        delivery_phone: deliveryAddress.phone,       // Fixed: snake_case
+        delivery_address: deliveryAddress.address,   // Fixed: snake_case
+        delivery_city: deliveryAddress.city,         // Fixed: snake_case
+        delivery_state: deliveryAddress.state,       // Fixed: snake_case
+        delivery_postal: deliveryAddress.postalCode, // Fixed: snake_case
+        delivery_country: deliveryAddress.country,   // Fixed: snake_case
+        notes: orderNotes || null                    // Fixed: use 'notes' field
+      })
+      .select()
+      .single();
 
-    if (error) {
-      throw new BadRequestException(error.message);
+    if (orderError) {
+      throw new BadRequestException(`Failed to create order: ${orderError.message}`);
     }
 
-    // Get the complete order details
+    // Create order items with correct table name (singular) and schema
+    const orderItemsData = orderItems.map(item => ({
+      order_id: order.id,        // Fixed: snake_case
+      product_id: item.product_id, // Fixed: snake_case
+      quantity: item.quantity,
+      price: item.price          // Fixed: use 'price' not 'unit_price'
+    }));
+
+    const { error: orderItemsError } = await this.supabase
+      .from('order_item')  // Fixed: singular table name
+      .insert(orderItemsData);
+
+    if (orderItemsError) {
+      // Clean up the order if order items creation fails
+      await this.supabase.from('orders').delete().eq('id', order.id);
+      throw new BadRequestException(`Failed to create order items: ${orderItemsError.message}`);
+    }
+
+    // Get the complete order details with correct table/field names
     const { data: completeOrder } = await this.supabase
       .from('orders')
       .select(`
         *,
-        orderItems (
+        order_item (
           *,
           product (
             id,
             name,
             images
           )
-        ),
-        user (
-          id,
-          email,
-          fullName
-        ),
-        address (*)
+        )
       `)
       .eq('id', order.id)
       .single();
 
-    return this.formatOrder(order);
+    return this.formatOrder(completeOrder);
   }
 
   async findAll(pagination: PaginationDto, isAdmin: boolean = false, userId?: string) {
@@ -119,24 +135,19 @@ export class OrdersService {
       .from('orders')
       .select(`
         *,
-        orderItems (
+        order_item (
           *,
           product (
             id,
             name,
             images
           )
-        ),
-        user (
-          id,
-          email,
-          fullName
         )
       `, { count: 'exact' });
 
     // Apply filters
     if (!isAdmin && userId) {
-      query = query.eq('userId', userId);
+      query = query.eq('user_id', userId);  // Fixed: snake_case
     }
 
     if (search) {
@@ -147,7 +158,7 @@ export class OrdersService {
     if (sortBy) {
       query = query.order(sortBy, { ascending: sortOrder === 'asc' });
     } else {
-      query = query.order('createdAt', { ascending: false });
+      query = query.order('created_at', { ascending: false });  // Fixed: snake_case
     }
 
     // Apply pagination
@@ -161,34 +172,28 @@ export class OrdersService {
     };
   }
 
-  async findOne(id: string, userId?: string, isAdmin: boolean = false) {
-    let query = this.supabase
+  async findOne(id: string, userId: string): Promise<any> {
+    const { data: order, error } = await this.supabase
       .from('orders')
       .select(`
         *,
-        orderItems (
-          *,
-          product (
+        order_item (
+          id,
+          product_id,
+          quantity,
+          price,
+          products (
             id,
             name,
             images
           )
-        ),
-        user (
-          id,
-          email,
-          fullName
         )
       `)
-      .eq('id', id);
-    
-    if (!isAdmin && userId) {
-      query = query.eq('userId', userId);
-    }
+      .eq('id', id)
+      .eq('user_id', userId)
+      .single();
 
-    const { data: order, error } = await query.single();
-
-    if (!order || error) {
+    if (error || !order) {
       throw new NotFoundException('Order not found');
     }
 
@@ -359,18 +364,18 @@ export class OrdersService {
   private formatOrder(order: any) {
     return {
       id: order.id,
-      userId: order.userId,
-      totalAmount: parseFloat(order.totalAmount.toString()),
+      userId: order.user_id,  // Fixed: map snake_case to camelCase
+      totalAmount: parseFloat((order.total_amount || 0).toString()), // Fixed: snake_case + null check
       status: order.status,
-      paymentRef: order.paymentRef,
-      receiptUrl: order.receiptUrl,
-      createdAt: order.createdAt,
-      updatedAt: order.updatedAt,
-      orderItems: (order.orderItems || []).map(item => ({
+      paymentRef: order.payment_ref,     // Fixed: snake_case
+      receiptUrl: order.receipt_url,     // Fixed: snake_case  
+      createdAt: order.created_at,       // Fixed: snake_case
+      updatedAt: order.updated_at,       // Fixed: snake_case
+      orderItems: (order.order_item || []).map(item => ({  // Fixed: snake_case table name
         id: item.id,
-        productId: item.productId,
+        productId: item.product_id,      // Fixed: snake_case
         quantity: item.quantity,
-        price: parseFloat(item.price.toString()),
+        price: parseFloat((item.price || 0).toString()), // Fixed: null check
         product: item.product,
       })),
       user: order.user,

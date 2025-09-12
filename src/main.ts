@@ -29,7 +29,7 @@ async function bootstrap() {
 
   // Use Render's dynamic port or fallback
   const port = process.env.PORT || configService.get('app.port') || 3000;
-  const apiPrefix = configService.get('app.apiPrefix') || 'api/v1';
+  const apiPrefix = configService.get('app.apiPrefix') || '';
 
   // CORS configuration with specific origins
   const corsOptions = {

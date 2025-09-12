@@ -30,6 +30,11 @@ export class SupabaseConfig {
           autoRefreshToken: false,
           persistSession: false,
         },
+        global: {
+          headers: {
+            'Authorization': `Bearer ${supabaseKey}`,
+          },
+        },
       });
     }
     return SupabaseConfig.instance;

@@ -97,7 +97,7 @@ export class OrdersController {
     @UserRole() userRole: string,
   ): Promise<SuccessResponseDto<OrderResponseDto>> {
     const isAdmin = userRole === 'ADMIN';
-    const result = await this.ordersService.findOne(id, isAdmin ? undefined : userId, isAdmin);
+    const result = await this.ordersService.findOne(id, isAdmin ? undefined : userId);
     return new SuccessResponseDto(result, 'Order retrieved successfully');
   }
 
