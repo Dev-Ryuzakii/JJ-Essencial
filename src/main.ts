@@ -6,6 +6,7 @@ import { AppModule } from './app.module';
 import * as cors from 'cors';
 import helmet from 'helmet';
 import * as compression from 'compression';
+import * as bodyParser from 'body-parser';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
@@ -47,6 +48,9 @@ async function bootstrap() {
   // Security middleware
   app.use(helmet());
   app.use(compression());
+
+  // Raw body parser for webhook signature verification
+  app.use('/api/v1/payments/webhook', bodyParser.raw({ type: 'application/json' }));
 
   // Apply CORS configuration
   app.use(cors(corsOptions));

@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsNumber, IsEnum, Min, IsOptional, IsUUID, IsBoolean } from 'class-validator';
+import { IsString, IsNotEmpty, IsNumber, IsEnum, Min, IsOptional, IsUUID, IsBoolean, IsObject, IsEmail } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export enum PaymentGateway {
@@ -89,6 +89,37 @@ export class InitiatePaymentDto {
   gateway: 'PAYSTACK' | 'FLUTTERWAVE' | 'BANK_TRANSFER';
 }
 
+export class InitiateFlutterwaveDto {
+  @ApiProperty({ example: 'order-uuid' })
+  @IsString()
+  @IsNotEmpty()
+  orderId: string;
+
+  @ApiProperty({ example: 5000 })
+  @IsNumber()
+  @Min(1)
+  amount: number;
+
+  @ApiProperty({ example: 'NGN', default: 'NGN' })
+  @IsOptional()
+  @IsString()
+  currency?: string;
+
+  @ApiProperty({
+    example: {
+      email: 'customer@example.com',
+      name: 'John Doe',
+      phone: '+2348123456789'
+    }
+  })
+  @IsObject()
+  customer: {
+    email: string;
+    name: string;
+    phone?: string;
+  };
+}
+
 export class InitiateBankTransferDto {
   @ApiProperty({ example: 'order-uuid' })
   @IsString()
@@ -105,6 +136,45 @@ export class PaymentResponseDto {
 
   @ApiProperty()
   reference: string;
+}
+
+export class FlutterwaveInitiateResponseDto {
+  @ApiProperty({ example: 'FLWPUBK_TEST-xxx' })
+  publicKey: string;
+
+  @ApiProperty({ example: 'tx_12345678' })
+  tx_ref: string;
+
+  @ApiProperty({ example: 5000 })
+  amount: number;
+
+  @ApiProperty({ example: 'NGN' })
+  currency: string;
+
+  @ApiProperty({
+    example: {
+      email: 'customer@example.com',
+      name: 'John Doe',
+      phone: '+2348123456789'
+    }
+  })
+  customer: {
+    email: string;
+    name: string;
+    phone?: string;
+  };
+}
+
+export class FlutterwaveVerifyDto {
+  @ApiProperty({ example: 'tx_12345678' })
+  @IsOptional()
+  @IsString()
+  tx_ref?: string;
+
+  @ApiProperty({ example: '12345678' })
+  @IsOptional()
+  @IsString()
+  transaction_id?: string;
 }
 
 export class BankTransferResponseDto {

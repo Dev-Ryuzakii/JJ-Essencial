@@ -29,6 +29,11 @@ import {
   BankTransferResponseDto,
   PaymentReceiptDto
 } from './dto/payment.dto';
+import { 
+  InitiateFlutterwaveDto,
+  FlutterwaveInitiateResponseDto,
+  FlutterwaveVerifyDto
+} from './dto/payment.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { AdminOnly } from '../../common/decorators/roles.decorator';
@@ -89,6 +94,44 @@ export class PaymentsController {
     return new SuccessResponseDto(result, 'Payment history retrieved successfully');
   }
 
+  // New Flutterwave Inline Endpoints
+  @Post('flutterwave/initiate')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Initiate Flutterwave Inline payment' })
+  @ApiResponse({
+    status: 200,
+    description: 'Flutterwave payment initiated successfully',
+    type: FlutterwaveInitiateResponseDto,
+  })
+  @ApiResponse({ status: 400, description: 'Bad Request' })
+  @ApiResponse({ status: 404, description: 'Order not found' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  async initiateFlutterwaveInline(
+    @UserId() userId: string,
+    @Body() initiateFlutterwaveDto: InitiateFlutterwaveDto,
+  ): Promise<SuccessResponseDto<FlutterwaveInitiateResponseDto>> {
+    const result = await this.paymentsService.initiateFlutterwaveInline(userId, initiateFlutterwaveDto);
+    return new SuccessResponseDto(result, 'Flutterwave payment initiated successfully');
+  }
+
+  @Post('flutterwave/confirm')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Confirm Flutterwave payment' })
+  @ApiResponse({ status: 200, description: 'Payment confirmed successfully' })
+  @ApiResponse({ status: 400, description: 'Bad Request' })
+  @ApiResponse({ status: 404, description: 'Transaction not found' })
+  async confirmFlutterwavePayment(
+    @UserId() userId: string,
+    @Body() flutterwaveVerifyDto: FlutterwaveVerifyDto,
+  ): Promise<SuccessResponseDto<any>> {
+    const result = await this.paymentsService.confirmFlutterwavePayment(userId, flutterwaveVerifyDto);
+    return new SuccessResponseDto(result, 'Payment confirmation completed');
+  }
+
   @Post('webhook/paystack')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Paystack webhook endpoint' })
@@ -105,7 +148,7 @@ export class PaymentsController {
 
   @Post('webhook/flutterwave')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Flutterwave webhook endpoint' })
+  @ApiOperation({ summary: 'Flutterwave webhook endpoint (secure)' })
   @ApiHeader({ name: 'verif-hash', description: 'Flutterwave signature' })
   @ApiResponse({ status: 200, description: 'Webhook processed successfully' })
   @ApiResponse({ status: 400, description: 'Invalid webhook signature' })
@@ -113,7 +156,7 @@ export class PaymentsController {
     @Body() payload: WebhookPayloadDto,
     @Headers('verif-hash') signature: string,
   ): Promise<SuccessResponseDto<any>> {
-    const result = await this.paymentsService.handleFlutterwaveWebhook(payload, signature);
+    const result = await this.paymentsService.handleFlutterwaveWebhookSecure(payload, signature);
     return new SuccessResponseDto(result, 'Webhook processed successfully');
   }
 
