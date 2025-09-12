@@ -438,67 +438,108 @@ export class PaymentsService {
   }
 
   async initiateBankTransfer(userId: string, orderId: string): Promise<BankTransferResponseDto> {
-    // Find the order and verify ownership
-    const { data: order, error: orderError } = await this.supabase
-      .from('orders')
-      .select('*')
-      .eq('id', orderId)
-      .eq('userId', userId)
-      .single();
+    try {
+      console.log('=== initiateBankTransfer Debug ===');
+      console.log('userId:', userId);
+      console.log('orderId:', orderId);
+      
+      // Find the order and verify ownership - simplified query without profile join for now
+      const { data: order, error: orderError } = await this.supabase
+        .from('orders')
+        .select('*')
+        .eq('id', orderId)
+        .eq('user_id', userId)  // Fixed: use snake_case column name
+        .single();
 
-    if (!order || orderError) {
-      throw new NotFoundException('Order not found');
+      console.log('Query result:', { order: order?.id, error: orderError?.message });
+
+      if (!order || orderError) {
+        console.log('Order not found - throwing NotFoundException');
+        throw new NotFoundException('Order not found');
+      }
+
+      if (order.status !== 'PENDING') {
+        throw new BadRequestException('Order is not in a valid state for payment');
+      }
+
+      // Get user profile separately
+      const { data: profile, error: profileError } = await this.supabase
+        .from('profile')
+        .select('id, email, full_name')
+        .eq('id', userId)
+        .single();
+
+      console.log('Profile query:', { profile: profile?.email, error: profileError?.message });
+
+      // Generate reference
+      const reference = `BT-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+      console.log('Generated reference:', reference);
+
+      // Attach profile to order for the response
+      const orderWithProfile = { ...order, profile };
+      
+      const result = await this.createBankTransferResponse(orderWithProfile, reference);
+      console.log('Bank transfer response created successfully');
+      return result;
+    } catch (error) {
+      console.error('Error in initiateBankTransfer:', error);
+      throw error;
     }
-
-    if (order.status !== 'PENDING') {
-      throw new BadRequestException('Order is not in a valid state for payment');
-    }
-
-    // Generate reference
-    const reference = `BT-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
-
-    return this.createBankTransferResponse(order, reference);
   }
 
   private async createBankTransferResponse(order: any, reference: string): Promise<BankTransferResponseDto> {
-    const bankAccounts = await this.bankAccountService.getActiveBankAccounts();
-    
-    if (bankAccounts.length === 0) {
-      throw new BadRequestException('No bank accounts configured for manual transfers');
-    }
-
-    const instructions = [
-      'Transfer the exact amount to any of the bank accounts below',
-      'Use the reference as your payment description/narration',
-      'Upload a clear screenshot or photo of your payment receipt',
-      'Your order will be processed once payment is verified by our team',
-      'Verification typically takes 1-2 hours during business hours'
-    ];
-
-    // Send email with bank details
     try {
-      await this.emailService.sendBankTransferInstructions(
-        order.user.email,
-        order.user.fullName,
-        {
-          reference,
-          amount: parseFloat(order.totalAmount.toString()),
-          bankAccounts,
-          instructions,
-          orderId: order.id,
-        }
-      );
-    } catch (error) {
-      console.error('Failed to send bank transfer email:', error);
-    }
+      console.log('=== createBankTransferResponse Debug ===');
+      console.log('Order data:', { id: order.id, total_amount: order.total_amount, profile: order.profile });
+      
+      const bankAccounts = await this.bankAccountService.getActiveBankAccounts();
+      console.log('Bank accounts found:', bankAccounts.length);
+      
+      if (bankAccounts.length === 0) {
+        throw new BadRequestException('No bank accounts configured for manual transfers');
+      }
 
-    return {
-      reference,
-      orderId: order.id,
-      bankAccounts,
-      amount: parseFloat(order.totalAmount.toString()),
-      instructions,
-    };
+      const instructions = [
+        'Transfer the exact amount to any of the bank accounts below',
+        'Use the reference as your payment description/narration',
+        'Upload a clear screenshot or photo of your payment receipt',
+        'Your order will be processed once payment is verified by our team',
+        'Verification typically takes 1-2 hours during business hours'
+      ];
+
+      // Send email with bank details
+      try {
+        console.log('Sending bank transfer email...');
+        await this.emailService.sendBankTransferInstructions(
+          order.profile?.email || 'customer@example.com',  // Fixed: use profile data with fallback
+          order.profile?.full_name || 'Customer',          // Fixed: use profile data with fallback
+          {
+            reference,
+            amount: parseFloat(order.total_amount?.toString() || order.totalAmount?.toString() || '0'), // Handle both snake_case and camelCase
+            bankAccounts,
+            instructions,
+            orderId: order.id,
+          }
+        );
+        console.log('Email sent successfully');
+      } catch (error) {
+        console.error('Failed to send bank transfer email:', error);
+      }
+
+      const response = {
+        reference,
+        orderId: order.id,
+        bankAccounts,
+        amount: parseFloat(order.total_amount?.toString() || order.totalAmount?.toString() || '0'), // Handle both snake_case and camelCase
+        instructions,
+      };
+      
+      console.log('Bank transfer response created:', { reference, orderId: order.id, amount: response.amount });
+      return response;
+    } catch (error) {
+      console.error('Error in createBankTransferResponse:', error);
+      throw error;
+    }
   }
 
   async uploadPaymentReceipt(
