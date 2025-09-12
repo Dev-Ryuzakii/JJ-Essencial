@@ -2,7 +2,8 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SupabaseConfig } from '../../config/supabase.config';
-import { BankAccountDto } from '../payments/dto/payment.dto';
+import { BankAccountDto, CreateBankAccountDto } from '../payments/dto/payment.dto';
+import { SuccessResponseDto } from '../../common/dto/response.dto';
 
 @Injectable()
 export class BankAccountService {
@@ -16,7 +17,7 @@ export class BankAccountService {
   async getActiveBankAccounts(): Promise<BankAccountDto[]> {
     try {
       const { data: accounts, error } = await this.supabase
-        .from('bank_account')
+        .from('bank_accounts')
         .select('*')
         .eq('is_active', true)
         .order('created_at', { ascending: true });
@@ -37,26 +38,32 @@ export class BankAccountService {
     }
   }
 
-  async createBankAccount(accountData: BankAccountDto): Promise<any> {
+  async createBankAccount(createBankAccountDto: CreateBankAccountDto): Promise<SuccessResponseDto<BankAccountDto>> {
     try {
-      const { data: account, error } = await this.supabase
-        .from('bank_account')
+      const { data: bankAccount, error } = await this.supabase
+        .from('bank_accounts')
         .insert({
-          bank_name: accountData.bankName,
-          account_name: accountData.accountName,
-          account_number: accountData.accountNumber,
-          sort_code: accountData.sortCode,
-          swift_code: accountData.swiftCode,
-          currency: accountData.currency || 'NGN',
-          is_active: true,
+          bank_name: createBankAccountDto.bankName,
+          account_number: createBankAccountDto.accountNumber,
+          account_name: createBankAccountDto.accountName,
+          is_active: createBankAccountDto.isActive ?? true,
         })
         .select()
         .single();
 
       if (error) throw error;
 
-      this.logger.log(`Bank account created: ${account.account_name} - ${account.account_number}`);
-      return account;
+      const bankAccountDto: BankAccountDto = {
+        bankName: bankAccount.bank_name,
+        accountName: bankAccount.account_name,
+        accountNumber: bankAccount.account_number,
+        sortCode: bankAccount.sort_code || undefined,
+        swiftCode: bankAccount.swift_code || undefined,
+        currency: bankAccount.currency,
+      };
+
+      this.logger.log(`Bank account created: ${bankAccount.id}`);
+      return new SuccessResponseDto(bankAccountDto, 'Bank account created successfully');
     } catch (error) {
       this.logger.error('Failed to create bank account:', error);
       throw error;
@@ -75,7 +82,7 @@ export class BankAccountService {
       };
 
       const { data: account, error } = await this.supabase
-        .from('bank_account')
+        .from('bank_accounts')
         .update(updateData)
         .eq('id', id)
         .select()
@@ -96,7 +103,7 @@ export class BankAccountService {
   async toggleBankAccountStatus(id: string): Promise<any> {
     try {
       const { data: account, error: fetchError } = await this.supabase
-        .from('bank_account')
+        .from('bank_accounts')
         .select('is_active')
         .eq('id', id)
         .single();
@@ -105,7 +112,7 @@ export class BankAccountService {
       if (!account) throw new NotFoundException('Bank account not found');
 
       const { data: updatedAccount, error: updateError } = await this.supabase
-        .from('bank_account')
+        .from('bank_accounts')
         .update({ is_active: !account.is_active })
         .eq('id', id)
         .select()
@@ -125,7 +132,7 @@ export class BankAccountService {
   async getAllBankAccounts(): Promise<any[]> {
     try {
       const { data: accounts, error } = await this.supabase
-        .from('bank_account')
+        .from('bank_accounts')
         .select('*')
         .order('created_at', { ascending: false });
 

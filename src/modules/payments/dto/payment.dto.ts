@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsNumber, IsEnum, Min, IsOptional, IsUUID } from 'class-validator';
+import { IsString, IsNotEmpty, IsNumber, IsEnum, Min, IsOptional, IsUUID, IsBoolean } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export enum PaymentGateway {
@@ -40,6 +40,42 @@ export class BankAccountDto {
 
   @ApiProperty({ example: 'NGN' })
   currency: string;
+}
+
+export class CreateBankAccountDto {
+  @ApiProperty({ example: 'First Bank Nigeria' })
+  @IsString()
+  @IsNotEmpty()
+  bankName: string;
+
+  @ApiProperty({ example: 'Your Company Name' })
+  @IsString()
+  @IsNotEmpty()
+  accountName: string;
+
+  @ApiProperty({ example: '1234567890' })
+  @IsString()
+  @IsNotEmpty()
+  accountNumber: string;
+
+  @ApiProperty({ example: '123456', required: false })
+  @IsOptional()
+  @IsString()
+  sortCode?: string;
+
+  @ApiProperty({ example: 'FIRSTNIG', required: false })
+  @IsOptional()
+  @IsString()
+  swiftCode?: string;
+
+  @ApiProperty({ example: 'NGN', default: 'NGN' })
+  @IsOptional()
+  @IsString()
+  currency?: string;
+
+  @ApiProperty({ example: true, default: true })
+  @IsOptional()
+  isActive?: boolean;
 }
 
 export class InitiatePaymentDto {

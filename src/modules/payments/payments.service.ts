@@ -403,30 +403,37 @@ export class PaymentsService {
 
   // Bank Transfer Methods
   async getPublicBankAccounts() {
+    this.logger.log('getPublicBankAccounts called - attempting to fetch from database');
+    
     try {
+      this.logger.log('Calling bankAccountService.getActiveBankAccounts()...');
       const bankAccounts = await this.bankAccountService.getActiveBankAccounts();
       
+      this.logger.log(`Retrieved ${bankAccounts.length} active bank accounts from database`);
+      this.logger.log('Raw bank accounts from service:', JSON.stringify(bankAccounts, null, 2));
+      
       // Return only customer-safe information
-      return bankAccounts.map(account => ({
+      const result = bankAccounts.map(account => ({
         id: crypto.randomUUID(), // Generate a temporary ID for frontend selection
         bank_name: account.bankName,
         account_name: account.accountName,
         account_number: account.accountNumber,
         currency: account.currency,
-        // Exclude any sensitive information like sort codes or swift codes
+        // Exclude any sensitive information like sort codes or swift codes for public endpoint
       }));
+      
+      this.logger.log('Mapped result for API:', JSON.stringify(result, null, 2));
+      return result;
     } catch (error) {
       this.logger.error('Error getting public bank accounts:', error);
-      // Return sample data if there's an error accessing the database
-      return [
-        {
-          id: '1',
-          bank_name: 'First Bank Nigeria',
-          account_name: 'JJ Essential Store',
-          account_number: '1234567890',
-          currency: 'NGN'
-        }
-      ];
+      this.logger.error('Error details:', {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      });
+      // Now that we fixed the table name issue, we should not return mock data
+      // Let the error bubble up so we can see real issues
+      throw new BadRequestException('Unable to retrieve bank accounts at this time');
     }
   }
 
