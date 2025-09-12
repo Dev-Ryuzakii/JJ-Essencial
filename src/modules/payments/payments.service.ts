@@ -29,7 +29,7 @@ export class PaymentsService {
       .from('orders')
       .select('*, user:users(*)')
       .eq('id', orderId)
-      .eq('userId', userId)
+      .eq('user_id', userId)
       .eq('status', 'PENDING')
       .single();
 
@@ -42,13 +42,14 @@ export class PaymentsService {
 
     // Create payment transaction record
     const { data: transaction, error: transactionError } = await this.supabase
-      .from('paymentTransaction')
+      .from('payment_transaction')
       .insert([{
-        orderId,
+        order_id: orderId,
         reference,
         amount: order.totalAmount,
         gateway,
         status: gateway === 'BANK_TRANSFER' ? 'AWAITING_VERIFICATION' : 'PENDING',
+        user_id: userId,
       }])
       .select()
       .single();
@@ -92,8 +93,8 @@ export class PaymentsService {
           currency: 'NGN',
           callback_url: `${process.env.FRONTEND_URL}/payment/callback`,
           metadata: {
-            orderId: order.id,
-            userId: order.userId,
+            order_id: order.id,
+            user_id: order.user_id,
           },
         },
         {
@@ -138,8 +139,8 @@ export class PaymentsService {
             description: `Payment for order ${order.id}`,
           },
           meta: {
-            orderId: order.id,
-            userId: order.userId,
+            order_id: order.id,
+            user_id: order.user_id,
           },
         },
         {
@@ -165,7 +166,7 @@ export class PaymentsService {
 
     // Get transaction record
     const { data: transaction, error: transactionError } = await this.supabase
-      .from('paymentTransaction')
+      .from('payment_transaction')
       .select(`
         *,
         order:orders (
@@ -191,7 +192,7 @@ export class PaymentsService {
     if (verificationResult.success) {
       // Update transaction
       const { error: updateTransactionError } = await this.supabase
-        .from('paymentTransaction')
+        .from('payment_transaction')
         .update({
           status: 'PAID',
           gatewayData: verificationResult.data,
@@ -209,7 +210,7 @@ export class PaymentsService {
           status: 'PAID',
           paymentRef: reference,
         })
-        .eq('id', transaction.orderId);
+        .eq('id', transaction.order_id);
 
       if (updateOrderError) {
         throw new Error('Failed to update order status');
@@ -319,7 +320,7 @@ export class PaymentsService {
 
   private async processSuccessfulPayment(reference: string, gateway: string, gatewayData: any) {
     const { data: transaction, error: transactionError } = await this.supabase
-      .from('paymentTransaction')
+      .from('payment_transaction')
       .select('*')
       .eq('reference', reference)
       .single();
@@ -330,7 +331,7 @@ export class PaymentsService {
 
     // Update transaction
     const { error: updateTransactionError } = await this.supabase
-      .from('paymentTransaction')
+      .from('payment_transaction')
       .update({
         status: 'PAID',
         gatewayData,
@@ -348,7 +349,7 @@ export class PaymentsService {
         status: 'PAID',
         paymentRef: reference,
       })
-      .eq('id', transaction.orderId);
+      .eq('id', transaction.order_id);
 
     if (updateOrderError) {
       throw new Error('Failed to update order status');
@@ -391,7 +392,7 @@ export class PaymentsService {
       amount: parseFloat(order.total_amount?.toString() || '0'),
       gateway: order.payment_method,
       status: order.payment_status,
-      orderId: order.id,
+      order_id: order.id,
       createdAt: order.created_at,
       order: {
         id: order.id,
@@ -518,7 +519,7 @@ export class PaymentsService {
             amount: parseFloat(order.total_amount?.toString() || order.totalAmount?.toString() || '0'), // Handle both snake_case and camelCase
             bankAccounts,
             instructions,
-            orderId: order.id,
+            order_id: order.id,
           }
         );
         console.log('Email sent successfully');
@@ -551,7 +552,7 @@ export class PaymentsService {
 
     // Find the transaction
     const { data: transaction, error: transactionError } = await this.supabase
-      .from('paymentTransaction')
+      .from('payment_transaction')
       .select(`
         *,
         order:orders (
@@ -566,7 +567,7 @@ export class PaymentsService {
       throw new NotFoundException('Payment transaction not found');
     }
 
-    if (transaction.order?.userId !== userId) {
+    if (transaction.order?.user_id !== userId) {
       throw new BadRequestException('You can only upload receipts for your own payments');
     }
 
@@ -604,7 +605,7 @@ export class PaymentsService {
         {
           reference,
           receiptId: receipt.id,
-          orderId: transaction.orderId!,
+          order_id: transaction.order_id!,
           amount: parseFloat(transaction.amount.toString()),
         }
       );
@@ -635,7 +636,7 @@ export class PaymentsService {
       .from('paymentReceipt')
       .select(`
         *,
-        transaction:paymentTransaction (
+        transaction:payment_transaction (
           *,
           order:orders (
             *,
@@ -678,7 +679,7 @@ export class PaymentsService {
     // If approved, update transaction and order status
     if (status === 'APPROVED') {
       const { error: transactionError } = await this.supabase
-        .from('paymentTransaction')
+        .from('payment_transaction')
         .update({ status: 'PAID' })
         .eq('id', receipt.transactionId);
 
@@ -689,7 +690,7 @@ export class PaymentsService {
       const { error: orderError } = await this.supabase
         .from('orders')
         .update({ status: 'PAID' })
-        .eq('id', receipt.transaction.orderId);
+        .eq('id', receipt.transaction.order_id);
 
       if (orderError) {
         throw new Error('Failed to update order status');
@@ -705,7 +706,7 @@ export class PaymentsService {
             amount: parseFloat(receipt.transaction.amount.toString()),
             gateway: receipt.transaction.gateway,
             status: 'PAID',
-            orderId: receipt.transaction.orderId,
+            order_id: receipt.transaction.order_id,
           }
         );
       } catch (error) {
@@ -720,7 +721,7 @@ export class PaymentsService {
           {
             reference: receipt.transaction.reference,
             reason: notes || 'Payment receipt could not be verified',
-            orderId: receipt.transaction.orderId,
+            order_id: receipt.transaction.order_id,
           }
         );
       } catch (error) {
@@ -746,7 +747,7 @@ export class PaymentsService {
       .from('paymentReceipt')
       .select(`
         *,
-        transaction:paymentTransaction (
+        transaction:payment_transaction (
           *,
           order:orders (
             *,
@@ -782,7 +783,7 @@ export class PaymentsService {
   async getReceiptsByTransaction(reference: string): Promise<PaymentReceiptDto[]> {
     // First get the transaction
     const { data: transaction, error: transactionError } = await this.supabase
-      .from('paymentTransaction')
+      .from('payment_transaction')
       .select('*')
       .eq('reference', reference)
       .single();
@@ -813,5 +814,285 @@ export class PaymentsService {
       createdAt: receipt.createdAt,
       uploader: receipt.uploader,
     }));
+  }
+
+  // New Flutterwave Inline Methods
+  async initiateFlutterwaveInline(userId: string, initiateFlutterwaveDto: any) {
+    const { orderId, amount, currency = 'NGN', customer } = initiateFlutterwaveDto;
+
+    // Validate order belongs to user
+    const { data: order, error: orderError } = await this.supabase
+      .from('orders')
+      .select('*, profile:user_id(id, email, full_name)')
+      .eq('id', orderId)
+      .eq('user_id', userId)
+      .single();
+
+    if (!order || orderError) {
+      throw new NotFoundException('Order not found');
+    }
+
+    // Generate unique tx_ref
+    const tx_ref = `flw_txref_${Date.now()}_${orderId.slice(0, 8)}`;
+    const publicKey = this.configService.get('payment.flutterwave.publicKey');
+
+    // Create/update payment transaction record
+    const { data: transaction, error: transactionError } = await this.supabase
+      .from('payment_transaction')
+      .insert([{
+        order_id: orderId,
+        reference: tx_ref,
+        amount: amount.toString(),
+        gateway: 'FLUTTERWAVE',
+        status: 'PENDING',
+        user_id: userId,
+      }])
+      .select()
+      .single();
+
+    if (!transaction || transactionError) {
+      this.logger.error('Failed to create payment transaction', transactionError);
+      throw new Error('Failed to create payment transaction');
+    }
+
+    return {
+      publicKey,
+      tx_ref,
+      amount,
+      currency,
+      customer: {
+        email: customer.email || order.profile?.email,
+        name: customer.name || order.profile?.full_name || 'Customer',
+        phone: customer.phone || '',
+      },
+    };
+  }
+
+  async confirmFlutterwavePayment(userId: string, verifyDto: any) {
+    const { transaction_id, tx_ref } = verifyDto;
+
+    if (!transaction_id) {
+      throw new BadRequestException('Transaction ID is required');
+    }
+
+    // Verify transaction with Flutterwave
+    const flutterwaveSecretKey = this.configService.get('payment.flutterwave.secretKey');
+    
+    if (!flutterwaveSecretKey) {
+      throw new BadRequestException('Flutterwave configuration not found');
+    }
+
+    try {
+      const response = await axios.get(
+        `https://api.flutterwave.com/v3/transactions/${transaction_id}/verify`,
+        {
+          headers: {
+            Authorization: `Bearer ${flutterwaveSecretKey}`,
+          },
+        }
+      );
+
+      const verificationData = response.data;
+      this.logger.debug('Flutterwave verification response', verificationData);
+
+      // Check if verification was successful
+      if (verificationData.status === 'success' && verificationData.data && verificationData.data.status === 'successful') {
+        const transactionData = verificationData.data;
+        
+        // Find our payment transaction record
+        const { data: transaction, error: transactionError } = await this.supabase
+          .from('payment_transaction')
+          .select('*, order:orders(*)')
+          .eq('reference', transactionData.tx_ref)
+          .eq('user_id', userId)
+          .single();
+
+        if (!transaction || transactionError) {
+          throw new NotFoundException('Payment transaction not found');
+        }
+
+        // Verify amount matches
+        const expectedAmount = parseFloat(transaction.amount);
+        const actualAmount = parseFloat(transactionData.amount);
+        
+        if (Math.abs(expectedAmount - actualAmount) > 0.01) {
+          this.logger.error('Amount mismatch in Flutterwave transaction', {
+            expected: expectedAmount,
+            actual: actualAmount,
+            tx_ref: transactionData.tx_ref
+          });
+          throw new BadRequestException('Payment amount mismatch');
+        }
+
+        // Update transaction status
+        const { error: updateError } = await this.supabase
+          .from('payment_transaction')
+          .update({
+            status: 'PAID',
+            gateway_response: transactionData,
+            verified_at: new Date().toISOString(),
+          })
+          .eq('id', transaction.id);
+
+        if (updateError) {
+          this.logger.error('Failed to update transaction status', updateError);
+        }
+
+        // Update order payment status
+        const { error: orderUpdateError } = await this.supabase
+          .from('orders')
+          .update({
+            payment_status: 'PAID',
+            payment_ref: transactionData.tx_ref,
+            payment_method: 'flutterwave',
+          })
+          .eq('id', transaction.order_id);
+
+        if (orderUpdateError) {
+          this.logger.error('Failed to update order payment status', orderUpdateError);
+        }
+
+        // Send confirmation email (optional)
+        try {
+          await this.emailService.sendPaymentSuccessEmail(
+            transaction.order.profile?.email || 'customer@example.com',
+            transaction.order.profile?.full_name || 'Customer',
+            {
+              order_id: transaction.order_id,
+              amount: expectedAmount,
+              reference: transactionData.tx_ref,
+            }
+          );
+        } catch (emailError) {
+          this.logger.warn('Failed to send payment confirmation email', emailError);
+        }
+
+        return {
+          success: true,
+          transaction: transactionData,
+          order: transaction.order,
+          message: 'Payment verified successfully',
+        };
+      } else {
+        // Payment failed or pending
+        const status = verificationData.data?.status || 'failed';
+        
+        // Update transaction status
+        const { data: transaction } = await this.supabase
+          .from('payment_transaction')
+          .select('*')
+          .eq('reference', tx_ref)
+          .eq('user_id', userId)
+          .single();
+
+        if (transaction) {
+          await this.supabase
+            .from('payment_transaction')
+            .update({
+              status: status === 'pending' ? 'PENDING' : 'FAILED',
+              gateway_response: verificationData.data,
+            })
+            .eq('id', transaction.id);
+        }
+
+        return {
+          success: false,
+          status,
+          message: verificationData.message || 'Payment verification failed',
+          data: verificationData.data,
+        };
+      }
+    } catch (error) {
+      this.logger.error('Flutterwave confirmation error', error);
+      
+      if (error.response?.status === 404) {
+        throw new NotFoundException('Transaction not found on Flutterwave');
+      }
+      
+      throw new BadRequestException(`Payment confirmation failed: ${error.response?.data?.message || error.message}`);
+    }
+  }
+
+  async handleFlutterwaveWebhookSecure(payload: any, signature: string) {
+    // Verify webhook signature
+    const webhookHash = this.configService.get('payment.flutterwave.encryptionKey') || this.configService.get('FLUTTERWAVE_WEBHOOK_HASH');
+    
+    if (!webhookHash) {
+      this.logger.error('Webhook hash not configured');
+      throw new BadRequestException('Webhook configuration missing');
+    }
+
+    // Create hash from payload
+    const expectedSignature = crypto
+      .createHmac('sha256', webhookHash)
+      .update(JSON.stringify(payload))
+      .digest('hex');
+
+    if (signature !== expectedSignature) {
+      this.logger.error('Invalid webhook signature', { 
+        received: signature, 
+        expected: expectedSignature 
+      });
+      throw new BadRequestException('Invalid webhook signature');
+    }
+
+    // Process the webhook
+    if (payload.event === 'charge.completed' && payload.data.status === 'successful') {
+      const transactionData = payload.data;
+      
+      // Find the transaction in our database
+      const { data: transaction, error: transactionError } = await this.supabase
+        .from('payment_transaction')
+        .select('*, order:orders(*)')
+        .eq('reference', transactionData.tx_ref)
+        .single();
+
+      if (!transaction || transactionError) {
+        this.logger.warn('Webhook: Transaction not found', { tx_ref: transactionData.tx_ref });
+        return { success: false, message: 'Transaction not found' };
+      }
+
+      // Verify amount
+      const expectedAmount = parseFloat(transaction.amount);
+      const actualAmount = parseFloat(transactionData.amount);
+      
+      if (Math.abs(expectedAmount - actualAmount) > 0.01) {
+        this.logger.error('Webhook: Amount mismatch', {
+          expected: expectedAmount,
+          actual: actualAmount,
+          tx_ref: transactionData.tx_ref
+        });
+        return { success: false, message: 'Amount mismatch' };
+      }
+
+      // Update transaction (idempotent)
+      await this.supabase
+        .from('payment_transaction')
+        .update({
+          status: 'PAID',
+          gateway_response: transactionData,
+          verified_at: new Date().toISOString(),
+        })
+        .eq('id', transaction.id)
+        .eq('status', 'PENDING'); // Only update if still pending
+
+      // Update order (idempotent)
+      await this.supabase
+        .from('orders')
+        .update({
+          payment_status: 'PAID',
+          payment_ref: transactionData.tx_ref,
+          payment_method: 'flutterwave',
+        })
+        .eq('id', transaction.order_id)
+        .neq('payment_status', 'PAID'); // Only update if not already paid
+
+      this.logger.log('Webhook: Payment processed successfully', { 
+        tx_ref: transactionData.tx_ref,
+        order_id: transaction.order_id 
+      });
+    }
+
+    return { success: true, message: 'Webhook processed' };
   }
 }
