@@ -1,0 +1,38 @@
+services:
+  - type: web
+    name: jj-essencial-api
+    env: node
+    repo: https://github.com/Dev-Ryuzakii/JJ-Essencial
+    buildCommand: npm install && npm run build
+    startCommand: npm run start:prod
+    plan: free
+    branch: main
+    rootDir: .
+    healthCheckPath: /api/v1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        fromService:
+          type: web
+          name: jj-essencial-api
+          property: port
+      - key: API_PREFIX
+        value: api/v1
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: BCRYPT_ROUNDS
+        value: 12
+      - key: RATE_LIMIT_WINDOW_MS
+        value: 900000
+      - key: RATE_LIMIT_MAX_REQUESTS
+        value: 100
+      - key: MAX_FILE_SIZE
+        value: 5242880
+      - key: ALLOWED_FILE_TYPES
+        value: image/jpeg,image/png,image/webp
+    scaling:
+      minInstances: 1
+      maxInstances: 1
