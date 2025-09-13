@@ -13,8 +13,32 @@ export class OrdersService {
     this.supabase = SupabaseConfig.getInstance();
   }
 
+  private async generateOrderNumber(): Promise<string> {
+    let orderNumber: string;
+    let exists = true;
+    
+    while (exists) {
+      // Generate a 6-digit random number
+      orderNumber = Math.floor(100000 + Math.random() * 900000).toString();
+      
+      // Check if this number already exists
+      const { data } = await this.supabase
+        .from('orders')
+        .select('id')
+        .eq('order_number', orderNumber)
+        .single();
+      
+      exists = !!data;
+    }
+    
+    return orderNumber;
+  }
+
   async create(userId: string, createOrderDto: CreateOrderDto) {
     const { items, deliveryAddress, orderNotes, savedAddressId } = createOrderDto;
+
+    // Generate unique order number
+    const orderNumber = await this.generateOrderNumber();
 
     // Validate products and check stock
     const productIds = items.map(item => item.productId);
@@ -70,6 +94,7 @@ export class OrdersService {
     const { data: order, error: orderError } = await this.supabase
       .from('orders')
       .insert({
+        order_number: orderNumber,                    // Added: unique 6-digit order number
         user_id: userId,                              // Fixed: snake_case
         total_amount: totalAmount,                    // Fixed: snake_case
         status: 'PENDING',                           // Fixed: uppercase status
@@ -194,7 +219,7 @@ export class OrdersService {
     }
 
     if (search) {
-      query = query.or(`id.ilike.%${search}%,paymentRef.ilike.%${search}%,user.email.ilike.%${search}%`);
+      query = query.or(`id.ilike.%${search}%,order_number.ilike.%${search}%,payment_ref.ilike.%${search}%`);
     }
 
     // Apply sorting
@@ -407,6 +432,7 @@ export class OrdersService {
   private formatOrder(order: any) {
     return {
       id: order.id,
+      orderNumber: order.order_number,  // Added: unique 6-digit order number
       userId: order.user_id,  // Fixed: map snake_case to camelCase
       totalAmount: parseFloat((order.total_amount || 0).toString()), // Fixed: snake_case + null check
       status: order.status,

@@ -34,15 +34,36 @@ async function bootstrap() {
 
   // CORS configuration with specific origins
   const corsOptions = {
-    origin: [
-      'https://essentialbyjay-nu.vercel.app',
-      'https://*.vercel.app',  // All Vercel domains
-      'http://localhost:5173', // Development
-      'http://localhost:3000'  // Alternative development
-    ],
+    origin: function (origin, callback) {
+      // Allow requests with no origin (like mobile apps or Postman)
+      if (!origin) return callback(null, true);
+      
+      const allowedOrigins = [
+        'https://essentialbyjay-nu.vercel.app',
+        'https://jj-essencial.onrender.com', // Deployed backend domain
+        'http://localhost:5173', // Development frontend
+        'http://localhost:3000', // Alternative development
+        'http://localhost:5174', // Alternative Vite dev server
+        'http://127.0.0.1:5173', // Alternative localhost format
+        ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []), // Dynamic frontend URL
+      ];
+      
+      // Check for exact match or Vercel app pattern
+      const isVercelApp = origin.match(/^https:\/\/.*\.vercel\.app$/);
+      const isAllowed = allowedOrigins.includes(origin) || isVercelApp;
+      
+      if (isAllowed) {
+        callback(null, true);
+      } else {
+        logger.warn(`❌ CORS blocked origin: ${origin}`);
+        callback(new Error(`Origin ${origin} not allowed by CORS policy`));
+      }
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
+    preflightContinue: false,
+    optionsSuccessStatus: 204,
   };
 
   // Security middleware
@@ -54,6 +75,21 @@ async function bootstrap() {
 
   // Apply CORS configuration
   app.use(cors(corsOptions));
+  
+  // Log CORS configuration for debugging
+  logger.log('✅ CORS Configuration Applied');
+  logger.log(`🌍 Allowed origins include: localhost:5173, jj-essencial.onrender.com, *.vercel.app`);
+  logger.log(`🔑 Credentials enabled: ${corsOptions.credentials}`);
+  logger.log(`📝 Methods: ${corsOptions.methods.join(', ')}`);
+  logger.log(`🎯 Headers: ${corsOptions.allowedHeaders.join(', ')}`);
+  
+  // Additional middleware for CORS debugging
+  app.use((req, res, next) => {
+    if (req.method === 'OPTIONS') {
+      logger.log(`📶 CORS Preflight for ${req.get('Origin') || 'unknown origin'} -> ${req.originalUrl}`);
+    }
+    next();
+  });
 
   // Global API prefix
   app.setGlobalPrefix(apiPrefix);
