@@ -2,9 +2,9 @@ services:
   - type: web
     name: jj-essencial-api
     env: node
-    repo: https://github.com/Dev-Ryuzakii/JJ-Essencial
+    repo: https://github.com/Yamikage-001/JJ-Essencial
     buildCommand: npm install && npm run build
-    startCommand: npm run start:prod
+    startCommand: node dist/src/main.js
     plan: free
     branch: main
     rootDir: .
