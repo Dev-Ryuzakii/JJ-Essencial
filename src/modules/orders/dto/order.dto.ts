@@ -102,6 +102,9 @@ export class OrderResponseDto {
   @ApiProperty()
   id: string;
 
+  @ApiProperty({ description: '6-digit unique order number', example: '123456' })
+  orderNumber: string;
+
   @ApiProperty()
   userId: string;
 

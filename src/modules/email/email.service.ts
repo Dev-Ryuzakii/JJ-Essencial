@@ -64,9 +64,9 @@ export class EmailService {
   ): Promise<void> {
     const emailTemplate: EmailTemplate = {
       to: userEmail,
-      subject: `Order Confirmation - #${orderDetails.id}`,
+      subject: `Order Confirmation - #${orderDetails.orderNumber || orderDetails.id}`,
       html: this.getOrderConfirmationTemplate(userName, orderDetails),
-      text: `Order Confirmed! Your order #${orderDetails.id} has been received.`,
+      text: `Order Confirmed! Your order #${orderDetails.orderNumber || orderDetails.id} has been received.`,
     };
 
     await this.sendEmail(emailTemplate);
@@ -112,9 +112,9 @@ export class EmailService {
     
     const emailTemplate: EmailTemplate = {
       to: adminEmail,
-      subject: `New Order Received - #${orderDetails.id}`,
+      subject: `New Order Received - #${orderDetails.orderNumber || orderDetails.id}`,
       html: this.getAdminOrderNotificationTemplate(orderDetails),
-      text: `New order #${orderDetails.id} received from ${orderDetails.user.email}`,
+      text: `New order #${orderDetails.orderNumber || orderDetails.id} received from ${orderDetails.user.email}`,
     };
 
     await this.sendEmail(emailTemplate);
@@ -244,7 +244,7 @@ export class EmailService {
         <div class="container">
             <div class="header">
                 <h1>Order Confirmed!</h1>
-                <p>Order #${orderDetails.id}</p>
+                <p>Order #${orderDetails.orderNumber || orderDetails.id}</p>
             </div>
             <div class="content">
                 <h2>Hi ${userName}!</h2>
@@ -394,7 +394,7 @@ export class EmailService {
                 
                 <h3>Order Details:</h3>
                 <ul>
-                    <li><strong>Order ID:</strong> ${orderDetails.id}</li>
+                    <li><strong>Order Number:</strong> ${orderDetails.orderNumber || orderDetails.id}</li>
                     <li><strong>Customer:</strong> ${orderDetails.user.fullName}</li>
                     <li><strong>Email:</strong> ${orderDetails.user.email}</li>
                     <li><strong>Total Amount:</strong> $${orderDetails.totalAmount}</li>
