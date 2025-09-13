@@ -132,6 +132,36 @@ export class PaymentsController {
     return new SuccessResponseDto(result, 'Payment confirmation completed');
   }
 
+  @Post('fast-confirm')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Fast payment confirmation - immediate response with background processing' })
+  @ApiResponse({ status: 200, description: 'Payment confirmation initiated' })
+  @ApiResponse({ status: 400, description: 'Bad Request' })
+  @ApiResponse({ status: 404, description: 'Transaction not found' })
+  async fastConfirmPayment(
+    @UserId() userId: string,
+    @Body() flutterwaveVerifyDto: FlutterwaveVerifyDto,
+  ): Promise<SuccessResponseDto<any>> {
+    const result = await this.paymentsService.fastConfirmPayment(userId, flutterwaveVerifyDto);
+    return new SuccessResponseDto(result, 'Payment confirmation initiated - check status endpoint for updates');
+  }
+
+  @Get('status/:reference')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get real-time payment status' })
+  @ApiResponse({ status: 200, description: 'Payment status retrieved' })
+  @ApiResponse({ status: 404, description: 'Transaction not found' })
+  async getPaymentStatus(
+    @UserId() userId: string,
+    @Param('reference') reference: string,
+  ): Promise<SuccessResponseDto<any>> {
+    const result = await this.paymentsService.getPaymentStatus(userId, reference);
+    return new SuccessResponseDto(result, 'Payment status retrieved');
+  }
+
   @Post('webhook/paystack')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Paystack webhook endpoint' })

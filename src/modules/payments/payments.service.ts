@@ -1,4 +1,5 @@
 import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SupabaseConfig } from '../../config/supabase.config';
@@ -1096,5 +1097,164 @@ export class PaymentsService {
     }
 
     return { success: true, message: 'Webhook processed' };
+  }
+
+  // ✅ FAST PAYMENT CONFIRMATION METHODS
+  async fastConfirmPayment(userId: string, verifyDto: any) {
+    const { transaction_id, tx_ref } = verifyDto;
+
+    if (!transaction_id) {
+      throw new BadRequestException('Transaction ID is required');
+    }
+
+    // Find our payment transaction record first (fast database check)
+    const { data: transaction, error: transactionError } = await this.supabase
+      .from('payment_transaction')
+      .select('*, order:orders(*)')
+      .eq('reference', tx_ref)
+      .eq('user_id', userId)
+      .single();
+
+    if (!transaction || transactionError) {
+      throw new NotFoundException('Payment transaction not found');
+    }
+
+    // Return immediate response with processing status
+    const immediateResponse = {
+      success: true,
+      transaction_id,
+      reference: tx_ref,
+      status: 'PROCESSING',
+      message: 'Payment verification started - use status endpoint to check progress',
+      order_id: transaction.order_id,
+      estimated_completion: new Date(Date.now() + 10000).toISOString(), // 10 seconds estimate
+    };
+
+    // Start background verification (don't await)
+    this.processPaymentInBackground(userId, verifyDto).catch(error => {
+      this.logger.error('Background payment processing failed', error);
+    });
+
+    return immediateResponse;
+  }
+
+  private async processPaymentInBackground(userId: string, verifyDto: any) {
+    try {
+      this.logger.log('🚀 Starting background payment verification', { 
+        transaction_id: verifyDto.transaction_id,
+        tx_ref: verifyDto.tx_ref 
+      });
+
+      // Perform the actual verification (same logic as confirmFlutterwavePayment)
+      const result = await this.confirmFlutterwavePayment(userId, verifyDto);
+      
+      this.logger.log('✅ Background payment verification completed', {
+        transaction_id: verifyDto.transaction_id,
+        success: result.success
+      });
+
+      // Optionally trigger real-time updates via WebSocket here
+      // this.notifyPaymentStatus(userId, verifyDto.tx_ref, result);
+      
+    } catch (error) {
+      this.logger.error('❌ Background payment verification failed', {
+        transaction_id: verifyDto.transaction_id,
+        error: error.message
+      });
+    }
+  }
+
+  async getPaymentStatus(userId: string, reference: string) {
+    // Get transaction and order status
+    const { data: transaction, error: transactionError } = await this.supabase
+      .from('payment_transaction')
+      .select(`
+        *,
+        order:orders (
+          *,
+          user:users (*)
+        )
+      `)
+      .eq('reference', reference)
+      .eq('user_id', userId)
+      .single();
+
+    if (!transaction || transactionError) {
+      throw new NotFoundException('Transaction not found');
+    }
+
+    // Check if payment is already confirmed
+    const isCompleted = transaction.status === 'PAID';
+    const orderStatus = transaction.order?.status;
+    
+    return {
+      reference,
+      transaction_id: transaction.gateway_response?.id || null,
+      status: transaction.status,
+      order_status: orderStatus,
+      payment_method: transaction.gateway,
+      amount: parseFloat(transaction.amount.toString()),
+      created_at: transaction.created_at,
+      verified_at: transaction.verified_at,
+      is_completed: isCompleted,
+      order: {
+        id: transaction.order?.id,
+        orderNumber: transaction.order?.order_number,
+        status: orderStatus,
+        total_amount: transaction.order?.total_amount,
+      },
+      last_updated: new Date().toISOString(),
+    };
+  }
+
+  // ✅ OPTIMIZED VERIFICATION WITH TIMEOUT
+  async quickVerifyFlutterwavePayment(transaction_id: string, timeout: number = 5000) {
+    const flutterwaveSecretKey = this.configService.get('payment.flutterwave.secretKey');
+    
+    if (!flutterwaveSecretKey) {
+      throw new BadRequestException('Flutterwave configuration not found');
+    }
+
+    try {
+      // Create timeout promise
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Verification timeout')), timeout);
+      });
+
+      // Race between API call and timeout
+      const response: any = await Promise.race([
+        axios.get(
+          `https://api.flutterwave.com/v3/transactions/${transaction_id}/verify`,
+          {
+            headers: {
+              Authorization: `Bearer ${flutterwaveSecretKey}`,
+            },
+            timeout: timeout - 500, // Leave 500ms buffer
+          }
+        ),
+        timeoutPromise
+      ]);
+
+      const verificationData = response.data;
+      return {
+        success: verificationData.status === 'success' && 
+                 verificationData.data && 
+                 verificationData.data.status === 'successful',
+        data: verificationData.data,
+        response_time: Date.now(),
+      };
+
+    } catch (error: any) {
+      if (error.message === 'Verification timeout') {
+        this.logger.warn(`Payment verification timeout for transaction ${transaction_id}`);
+        return {
+          success: false,
+          error: 'TIMEOUT',
+          message: 'Verification timed out - payment may still be processing',
+        };
+      }
+      
+      throw new BadRequestException(`Quick verification failed: ${error.response?.data?.message || error.message}`);
+    }
   }
 }
