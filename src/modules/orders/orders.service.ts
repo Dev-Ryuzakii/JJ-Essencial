@@ -410,16 +410,31 @@ export class OrdersService {
       userId: order.user_id,  // Fixed: map snake_case to camelCase
       totalAmount: parseFloat((order.total_amount || 0).toString()), // Fixed: snake_case + null check
       status: order.status,
+      paymentStatus: order.payment_status, // Added: payment status mapping
       paymentRef: order.payment_ref,     // Fixed: snake_case
       receiptUrl: order.receipt_url,     // Fixed: snake_case  
       createdAt: order.created_at,       // Fixed: snake_case
       updatedAt: order.updated_at,       // Fixed: snake_case
+      
+      // Add delivery address fields for frontend compatibility
+      deliveryPhone: order.delivery_phone,
+      deliveryAddress: order.delivery_address,
+      deliveryCity: order.delivery_city,
+      deliveryState: order.delivery_state,
+      deliveryPostal: order.delivery_postal,
+      deliveryCountry: order.delivery_country,
+      notes: order.notes,
+      
       orderItems: (order.order_item || []).map(item => ({  // Fixed: snake_case table name
         id: item.id,
         productId: item.product_id,      // Fixed: snake_case
         quantity: item.quantity,
         price: parseFloat((item.price || 0).toString()), // Fixed: null check
-        product: item.product,
+        product: item.product ? {
+          id: item.product.id,
+          name: item.product.name,
+          images: item.product.images || []
+        } : undefined,
       })),
       user: order.user,
     };

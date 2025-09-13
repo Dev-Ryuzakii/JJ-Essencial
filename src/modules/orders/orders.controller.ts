@@ -60,14 +60,28 @@ export class OrdersController {
     @Query() pagination: PaginationDto,
     @UserId() userId: string,
     @UserRole() userRole: string,
-  ): Promise<PaginatedResponseDto<OrderResponseDto>> {
+  ): Promise<SuccessResponseDto<any>> {
     const isAdmin = userRole === 'ADMIN';
     const { orders, total } = await this.ordersService.findAll(
       pagination,
       isAdmin,
       isAdmin ? undefined : userId,
     );
-    return new PaginatedResponseDto(orders, total, pagination.page, pagination.limit);
+    
+    // Return both paginated and simple array formats for frontend compatibility
+    const responseData = {
+      orders: orders, // Array format for frontend compatibility
+      pagination: {
+        page: pagination.page || 1,
+        limit: pagination.limit || 10,
+        total: total || 0,
+        pages: Math.ceil((total || 0) / (pagination.limit || 10)),
+        hasNext: (pagination.page || 1) < Math.ceil((total || 0) / (pagination.limit || 10)),
+        hasPrev: (pagination.page || 1) > 1,
+      }
+    };
+    
+    return new SuccessResponseDto(responseData, 'Orders retrieved successfully');
   }
 
   @Get('stats')
