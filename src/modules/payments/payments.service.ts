@@ -938,10 +938,11 @@ export class PaymentsService {
           this.logger.error('Failed to update transaction status', updateError);
         }
 
-        // Update order payment status
+        // Update order payment status AND main status
         const { error: orderUpdateError } = await this.supabase
           .from('orders')
           .update({
+            status: 'PAID',
             payment_status: 'PAID',
             payment_ref: transactionData.tx_ref,
             payment_method: 'flutterwave',
@@ -1076,10 +1077,11 @@ export class PaymentsService {
         .eq('id', transaction.id)
         .eq('status', 'PENDING'); // Only update if still pending
 
-      // Update order (idempotent)
+      // Update order (idempotent) - Update both status and payment_status
       await this.supabase
         .from('orders')
         .update({
+          status: 'PAID',
           payment_status: 'PAID',
           payment_ref: transactionData.tx_ref,
           payment_method: 'flutterwave',
