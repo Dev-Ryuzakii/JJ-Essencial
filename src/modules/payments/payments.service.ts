@@ -1,5 +1,4 @@
 import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
-import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SupabaseConfig } from '../../config/supabase.config';
