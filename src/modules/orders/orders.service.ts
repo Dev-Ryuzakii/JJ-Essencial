@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SupabaseConfig } from '../../config/supabase.config';
+import { EmailService } from '../email/email.service';
 import { CreateOrderDto, UpdateOrderStatusDto, OrderItemDto } from './dto/order.dto';
 import { PaginationDto } from '../../common/dto/common.dto';
 
@@ -8,7 +9,7 @@ import { PaginationDto } from '../../common/dto/common.dto';
 export class OrdersService {
   private supabase: SupabaseClient;
 
-  constructor() {
+  constructor(private emailService: EmailService) {
     this.supabase = SupabaseConfig.getInstance();
   }
 
@@ -123,7 +124,49 @@ export class OrdersService {
       .eq('id', order.id)
       .single();
 
-    return this.formatOrder(completeOrder);
+    // Get user details for email notifications
+    const { data: userData } = await this.supabase
+      .from('profile')
+      .select('email, full_name')
+      .eq('id', userId)
+      .single();
+
+    const formattedOrder = this.formatOrder(completeOrder);
+
+    // Send email notifications
+    if (userData) {
+      try {
+        // Send order confirmation email to customer
+        await this.emailService.sendOrderConfirmationEmail(
+          userData.email,
+          userData.full_name || 'Customer',
+          {
+            id: formattedOrder.id,
+            totalAmount: formattedOrder.totalAmount,
+            status: formattedOrder.status,
+            createdAt: formattedOrder.createdAt,
+            orderItems: formattedOrder.orderItems
+          }
+        );
+
+        // Send admin notification
+        await this.emailService.sendAdminOrderNotification({
+          id: formattedOrder.id,
+          totalAmount: formattedOrder.totalAmount,
+          createdAt: formattedOrder.createdAt,
+          orderItems: formattedOrder.orderItems,
+          user: {
+            email: userData.email,
+            fullName: userData.full_name || 'Customer'
+          }
+        });
+      } catch (emailError) {
+        console.warn('Failed to send order notification emails:', emailError.message);
+        // Don't fail the order creation if emails fail
+      }
+    }
+
+    return formattedOrder;
   }
 
   async findAll(pagination: PaginationDto, isAdmin: boolean = false, userId?: string) {

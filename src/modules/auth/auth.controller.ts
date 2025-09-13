@@ -18,6 +18,7 @@ import {
   ResetPasswordDto,
   UpdatePasswordDto,
   AdminSignInDto,
+  ConfirmPasswordResetDto,
 } from './dto/auth.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser, UserId } from '../../common/decorators/user.decorator';
@@ -74,11 +75,99 @@ export class AuthController {
 
   @Post('reset-password')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Request password reset' })
-  @ApiResponse({ status: 200, description: 'Reset email sent' })
+  @ApiOperation({ 
+    summary: 'Request password reset',
+    description: 'Send a password reset email to the user. A reset link will be sent to the provided email address if it exists in the system.'
+  })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Reset email sent (or would be sent if email exists)',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean', example: true },
+        message: { type: 'string', example: 'If the email exists in our system, a reset link has been sent' },
+        data: {
+          type: 'object',
+          properties: {
+            message: { type: 'string', example: 'If the email exists in our system, a reset link has been sent' }
+          }
+        }
+      }
+    }
+  })
+  @ApiResponse({ status: 400, description: 'Invalid email format' })
+  @ApiResponse({ status: 500, description: 'Internal server error' })
   async resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
     const result = await this.authService.resetPassword(resetPasswordDto);
-    return new SuccessResponseDto(result, 'Password reset email sent');
+    return new SuccessResponseDto(result, 'Password reset request processed');
+  }
+
+  @Post('confirm-reset-password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ 
+    summary: 'Confirm password reset with token',
+    description: 'Reset password using the token received via email. This endpoint should be called from your password reset page.'
+  })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Password successfully reset',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean', example: true },
+        message: { type: 'string', example: 'Password has been reset successfully' },
+        data: {
+          type: 'object',
+          properties: {
+            message: { type: 'string', example: 'Password has been reset successfully' }
+          }
+        }
+      }
+    }
+  })
+  @ApiResponse({ status: 400, description: 'Invalid request data' })
+  @ApiResponse({ status: 401, description: 'Invalid or expired reset token' })
+  @ApiResponse({ status: 500, description: 'Internal server error' })
+  async confirmPasswordReset(@Body() confirmPasswordResetDto: ConfirmPasswordResetDto) {
+    const result = await this.authService.confirmPasswordReset(confirmPasswordResetDto);
+    return new SuccessResponseDto(result, 'Password reset completed');
+  }
+
+  @Put('update-password')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ 
+    summary: 'Update user password',
+    description: 'Update the current user password. Optionally verify current password before updating.'
+  })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Password successfully updated',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean', example: true },
+        message: { type: 'string', example: 'Password has been updated successfully' },
+        data: {
+          type: 'object',
+          properties: {
+            message: { type: 'string', example: 'Password has been updated successfully' }
+          }
+        }
+      }
+    }
+  })
+  @ApiResponse({ status: 400, description: 'Invalid request data or current password incorrect' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 500, description: 'Internal server error' })
+  async updatePassword(
+    @UserId() userId: string,
+    @Body() updatePasswordDto: UpdatePasswordDto
+  ) {
+    const result = await this.authService.updatePassword(userId, updatePasswordDto);
+    return new SuccessResponseDto(result, 'Password updated successfully');
   }
 
   @Get('profile')
