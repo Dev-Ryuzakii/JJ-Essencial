@@ -3,7 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseConfig } from '../../config/supabase.config';
 import { EmailService } from '../email/email.service';
-import { SignUpDto, SignInDto, AuthResponseDto, ResetPasswordDto, AdminSignInDto } from './dto/auth.dto';
+import { SignUpDto, SignInDto, AuthResponseDto, ResetPasswordDto, AdminSignInDto, ConfirmPasswordResetDto, UpdatePasswordDto } from './dto/auth.dto';
 
 @Injectable()
 export class AuthService {
@@ -118,6 +118,15 @@ export class AuthService {
       };
       
       const access_token = this.jwtService.sign(payload);
+
+      // Send welcome email
+      try {
+        await this.emailService.sendWelcomeEmail(profile.email, profile.full_name || fullName);
+        this.logger.log(`Welcome email sent to ${profile.email}`);
+      } catch (emailError) {
+        this.logger.warn(`Failed to send welcome email to ${profile.email}:`, emailError.message);
+        // Don't fail the signup process if email fails
+      }
 
       return {
         access_token,
@@ -236,7 +245,9 @@ export class AuthService {
   async resetPassword(resetPasswordDto: ResetPasswordDto): Promise<{ message: string }> {
     const { email } = resetPasswordDto;
 
-    // Check if user exists in Supabase
+    this.logger.log(`Password reset requested for: ${email}`);
+
+    // Check if user exists in our database
     const { data: profile, error: profileError } = await this.supabase
       .from('profile')
       .select()
@@ -244,20 +255,116 @@ export class AuthService {
       .single();
 
     if (!profile) {
-      // Don't reveal that user doesn't exist
-      return { message: 'If the email exists, a reset link has been sent' };
+      this.logger.log(`Password reset requested for non-existent user: ${email}`);
+      // Don't reveal that user doesn't exist for security
+      return { message: 'If the email exists in our system, a reset link has been sent' };
     }
 
-    // Send reset password email via Supabase
-    const { error } = await this.supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${process.env.FRONTEND_URL}/reset-password`,
-    });
-
-    if (error) {
-      throw new Error(`Failed to send reset email: ${error.message}`);
+    if (profileError && profileError.code !== 'PGRST116') {
+      this.logger.error(`Database error checking profile: ${profileError.message}`);
+      throw new Error('Error processing password reset request');
     }
 
-    return { message: 'If the email exists, a reset link has been sent' };
+    try {
+      // Send reset password email via Supabase with custom redirect URL
+      const resetUrl = `${this.configService.get('app.frontendUrl')}/reset-password`;
+      
+      const { error } = await this.supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: resetUrl,
+      });
+
+      if (error) {
+        this.logger.error(`Supabase reset password error: ${error.message}`);
+        throw new Error(`Failed to send reset email: ${error.message}`);
+      }
+
+      // Send custom email notification using our email service
+      try {
+        await this.emailService.sendPasswordResetEmail(
+          email,
+          profile.full_name || 'User',
+          'custom-reset-token' // This will be replaced with Supabase's actual implementation
+        );
+        this.logger.log(`Custom password reset email sent to: ${email}`);
+      } catch (emailError) {
+        this.logger.warn(`Failed to send custom reset email: ${emailError.message}`);
+        // Don't fail the process if our custom email fails
+      }
+
+      return { message: 'If the email exists in our system, a reset link has been sent' };
+    } catch (error) {
+      this.logger.error(`Password reset error: ${error.message}`);
+      throw new Error('Error processing password reset request');
+    }
+  }
+
+  async confirmPasswordReset(confirmPasswordResetDto: ConfirmPasswordResetDto): Promise<{ message: string }> {
+    const { newPassword, token } = confirmPasswordResetDto;
+
+    this.logger.log('Password reset confirmation attempt');
+
+    try {
+      // Update password using Supabase
+      const { error } = await this.supabase.auth.updateUser({
+        password: newPassword
+      });
+
+      if (error) {
+        this.logger.error(`Password reset confirmation error: ${error.message}`);
+        throw new Error('Invalid or expired reset token');
+      }
+
+      this.logger.log('Password reset completed successfully');
+      return { message: 'Password has been reset successfully' };
+    } catch (error) {
+      this.logger.error(`Password reset confirmation error: ${error.message}`);
+      throw new Error('Failed to reset password. The token may be invalid or expired.');
+    }
+  }
+
+  async updatePassword(userId: string, updatePasswordDto: UpdatePasswordDto): Promise<{ message: string }> {
+    const { password, currentPassword } = updatePasswordDto;
+
+    this.logger.log(`Password update requested for user: ${userId}`);
+
+    try {
+      // If current password is provided, verify it first
+      if (currentPassword) {
+        const { data: profile } = await this.supabase
+          .from('profile')
+          .select('email')
+          .eq('id', userId)
+          .single();
+
+        if (profile) {
+          // Verify current password by attempting sign in
+          const { error: verifyError } = await this.supabase.auth.signInWithPassword({
+            email: profile.email,
+            password: currentPassword,
+          });
+
+          if (verifyError) {
+            throw new Error('Current password is incorrect');
+          }
+        }
+      }
+
+      // Update password
+      const { error } = await this.supabase.auth.admin.updateUserById(userId, {
+        password: password
+      });
+
+      if (error) {
+        this.logger.error(`Password update error: ${error.message}`);
+        throw new Error('Failed to update password');
+      }
+
+      this.logger.log(`Password updated successfully for user: ${userId}`);
+      return { message: 'Password has been updated successfully' };
+    } catch (error) {
+      this.logger.error(`Password update error: ${error.message}`);
+      throw new Error(error.message || 'Failed to update password');
+    }
   }
 
   async validateUser(userId: string): Promise<any> {

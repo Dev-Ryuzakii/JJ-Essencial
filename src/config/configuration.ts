@@ -3,6 +3,7 @@ export interface AppConfig {
   apiPrefix: string;
   nodeEnv: string;
   allowedOrigins: string[];
+  frontendUrl: string;
 }
 
 export interface DatabaseConfig {
@@ -44,6 +45,7 @@ export interface EmailConfig {
     email: string;
     name: string;
   };
+  adminEmail?: string;
 }
 
 export interface FileUploadConfig {
@@ -63,6 +65,7 @@ export default () => ({
     apiPrefix: process.env.API_PREFIX || '',
     nodeEnv: process.env.NODE_ENV || 'development',
     allowedOrigins: process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3000'],
+    frontendUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
   } as AppConfig,
 
   database: {
@@ -104,6 +107,7 @@ export default () => ({
       email: process.env.FROM_EMAIL,
       name: process.env.FROM_NAME || 'E-commerce Store',
     },
+    adminEmail: process.env.ADMIN_EMAIL || process.env.FROM_EMAIL,
   } as EmailConfig,
 
   fileUpload: {
