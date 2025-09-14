@@ -2,14 +2,19 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SupabaseConfig } from '../../config/supabase.config';
 import { EmailService } from '../email/email.service';
+import { InventoryService } from '../inventory/inventory.service';
 import { CreateOrderDto, UpdateOrderStatusDto, OrderItemDto } from './dto/order.dto';
 import { PaginationDto } from '../../common/dto/common.dto';
+import { StockMovementType } from '../inventory/dto/inventory.dto';
 
 @Injectable()
 export class OrdersService {
   private supabase: SupabaseClient;
 
-  constructor(private emailService: EmailService) {
+  constructor(
+    private emailService: EmailService,
+    private inventoryService: InventoryService,
+  ) {
     this.supabase = SupabaseConfig.getInstance();
   }
 
@@ -130,6 +135,48 @@ export class OrdersService {
       // Clean up the order if order items creation fails
       await this.supabase.from('orders').delete().eq('id', order.id);
       throw new BadRequestException(`Failed to create order items: ${orderItemsError.message}`);
+    }
+
+    // Deduct stock and record inventory movements for each item
+    try {
+      for (const item of items) {
+        // Get current product stock to calculate new stock
+        const { data: currentProduct, error: stockCheckError } = await this.supabase
+          .from('product')
+          .select('stock')
+          .eq('id', item.productId)
+          .single();
+
+        if (stockCheckError || !currentProduct) {
+          throw new Error(`Failed to check current stock for product ${item.productId}`);
+        }
+
+        const newStock = currentProduct.stock - item.quantity;
+        
+        // Update product stock
+        const { error: stockUpdateError } = await this.supabase
+          .from('product')
+          .update({ stock: newStock })
+          .eq('id', item.productId);
+
+        if (stockUpdateError) {
+          throw new Error(`Failed to update stock for product ${item.productId}: ${stockUpdateError.message}`);
+        }
+
+        // Record stock movement in inventory system
+        await this.inventoryService.recordStockMovement(userId, {
+          productId: item.productId,
+          type: StockMovementType.SALE,
+          quantity: item.quantity,
+          reason: `Order sale - Order #${orderNumber}`,
+          reference: order.id,
+        });
+      }
+    } catch (stockError) {
+      // If stock deduction fails, clean up the order and order items
+      await this.supabase.from('order_item').delete().eq('order_id', order.id);
+      await this.supabase.from('orders').delete().eq('id', order.id);
+      throw new BadRequestException(`Failed to process stock deduction: ${stockError.message}`);
     }
 
     // Get the complete order details with correct table/field names
