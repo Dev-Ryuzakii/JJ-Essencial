@@ -33,6 +33,7 @@ export class AdminService {
 
   // ============= DASHBOARD SERVICES =============
   async getDashboardStats(): Promise<DashboardStatsDto> {
+    // Keep the existing simple dashboard stats for backward compatibility
     try {
       // Get total users
       const { count: totalUsers } = await this.supabase
@@ -114,6 +115,380 @@ export class AdminService {
       this.logger.error('Error getting dashboard stats:', error);
       throw error;
     }
+  }
+
+  async getComprehensiveDashboardStats(params: {
+    period: 'day' | 'week' | 'month' | 'year';
+    startDate?: string;
+    endDate?: string;
+  }) {
+    try {
+      const { period, startDate, endDate } = params;
+      const now = new Date();
+      
+      // Calculate date ranges
+      const dates = this.calculateDateRanges(period, startDate, endDate);
+      
+      // Fetch all data in parallel
+      const [
+        orderStats,
+        salesSummary,
+        userStats,
+        productStats,
+        recentOrders,
+        recentReviews,
+        salesChart
+      ] = await Promise.all([
+        this.getOrderStats(dates.current.start, dates.current.end),
+        this.getSalesSummary(dates.current.start, dates.current.end, dates.previous.start, dates.previous.end),
+        this.getUserStats(dates.current.start, dates.current.end),
+        this.getProductStats(),
+        this.getRecentOrders(10),
+        this.getRecentReviews(5),
+        this.getSalesChart(dates.current.start, dates.current.end, period)
+      ]);
+
+      return {
+        orderStats,
+        salesSummary,
+        userStats,
+        productStats,
+        recentOrders,
+        recentReviews,
+        salesChart
+      };
+    } catch (error) {
+      this.logger.error('Error getting comprehensive dashboard stats:', error);
+      throw error;
+    }
+  }
+
+  private calculateDateRanges(period: string, startDate?: string, endDate?: string) {
+    const now = new Date();
+    const currentEnd = endDate ? new Date(endDate) : now;
+    let currentStart: Date;
+    let previousStart: Date;
+    let previousEnd: Date;
+
+    if (startDate) {
+      currentStart = new Date(startDate);
+    } else {
+      switch (period) {
+        case 'day':
+          currentStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+          break;
+        case 'week':
+          currentStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          break;
+        case 'month':
+          currentStart = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+          break;
+        case 'year':
+          currentStart = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+          break;
+        default:
+          currentStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      }
+    }
+
+    // Calculate previous period for comparison
+    const periodDuration = currentEnd.getTime() - currentStart.getTime();
+    previousEnd = new Date(currentStart.getTime());
+    previousStart = new Date(currentStart.getTime() - periodDuration);
+
+    return {
+      current: {
+        start: currentStart.toISOString(),
+        end: currentEnd.toISOString()
+      },
+      previous: {
+        start: previousStart.toISOString(),
+        end: previousEnd.toISOString()
+      }
+    };
+  }
+
+  private async getOrderStats(startDate: string, endDate: string) {
+    const [pendingCount, paidCount, completedCount, cancelledCount] = await Promise.all([
+      this.supabase.from('orders').select('*', { count: 'exact', head: true })
+        .eq('status', 'PENDING')
+        .gte('created_at', startDate)
+        .lte('created_at', endDate),
+      this.supabase.from('orders').select('*', { count: 'exact', head: true })
+        .eq('status', 'PAID')
+        .gte('created_at', startDate)
+        .lte('created_at', endDate),
+      this.supabase.from('orders').select('*', { count: 'exact', head: true })
+        .eq('status', 'COMPLETED')
+        .gte('created_at', startDate)
+        .lte('created_at', endDate),
+      this.supabase.from('orders').select('*', { count: 'exact', head: true })
+        .eq('status', 'CANCELLED')
+        .gte('created_at', startDate)
+        .lte('created_at', endDate)
+    ]);
+
+    return {
+      pending: pendingCount.count || 0,
+      paid: paidCount.count || 0,
+      completed: completedCount.count || 0,
+      cancelled: cancelledCount.count || 0
+    };
+  }
+
+  private async getSalesSummary(currentStart: string, currentEnd: string, previousStart: string, previousEnd: string) {
+    const [currentPeriod, previousPeriod] = await Promise.all([
+      this.supabase.from('orders').select('total_amount')
+        .in('status', ['PAID', 'COMPLETED'])
+        .gte('created_at', currentStart)
+        .lte('created_at', currentEnd),
+      this.supabase.from('orders').select('total_amount')
+        .in('status', ['PAID', 'COMPLETED'])
+        .gte('created_at', previousStart)
+        .lte('created_at', previousEnd)
+    ]);
+
+    const currentSales = currentPeriod.data?.reduce((sum, order) => sum + (order.total_amount || 0), 0) || 0;
+    const currentOrders = currentPeriod.data?.length || 0;
+    
+    const previousSales = previousPeriod.data?.reduce((sum, order) => sum + (order.total_amount || 0), 0) || 0;
+    const previousOrders = previousPeriod.data?.length || 0;
+
+    return {
+      totalSales: this.formatCurrency(currentSales),
+      orderCount: currentOrders,
+      comparisonPeriod: {
+        totalSales: previousSales.toString(),
+        orderCount: previousOrders
+      }
+    };
+  }
+
+  private async getUserStats(startDate: string, endDate: string) {
+    const [totalUsers, newUsers] = await Promise.all([
+      this.supabase.from('profile').select('*', { count: 'exact', head: true }),
+      this.supabase.from('profile').select('*', { count: 'exact', head: true })
+        .gte('created_at', startDate)
+        .lte('created_at', endDate)
+    ]);
+
+    return {
+      totalUsers: totalUsers.count || 0,
+      newUsers: newUsers.count || 0
+    };
+  }
+
+  private async getProductStats() {
+    const [totalProducts, lowStock, outOfStock, topSelling] = await Promise.all([
+      this.supabase.from('product').select('*', { count: 'exact', head: true })
+        .eq('is_active', true),
+      this.supabase.from('product').select('*', { count: 'exact', head: true })
+        .eq('is_active', true)
+        .lte('stock', 10)
+        .gt('stock', 0),
+      this.supabase.from('product').select('*', { count: 'exact', head: true })
+        .eq('is_active', true)
+        .eq('stock', 0),
+      this.getTopSellingProducts()
+    ]);
+
+    return {
+      totalProducts: totalProducts.count || 0,
+      lowStock: lowStock.count || 0,
+      outOfStock: outOfStock.count || 0,
+      topSelling: topSelling
+    };
+  }
+
+  private async getTopSellingProducts() {
+    try {
+      const { data: orderItems } = await this.supabase
+        .from('order_item')
+        .select(`
+          product_id,
+          quantity,
+          price,
+          product:product_id (
+            id,
+            name,
+            price
+          )
+        `);
+
+      if (!orderItems || orderItems.length === 0) {
+        return [];
+      }
+
+      // Group by product and calculate totals
+      const productSales = orderItems.reduce((acc, item) => {
+        const productId = item.product_id;
+        if (!acc[productId]) {
+          acc[productId] = {
+            id: productId,
+            name: item.product?.name || 'Unknown Product',
+            totalSold: 0,
+            revenue: '₦0.00'
+          };
+        }
+        acc[productId].totalSold += item.quantity;
+        
+        const revenue = parseFloat(acc[productId].revenue.replace('₦', '').replace(',', '')) + (item.price * item.quantity);
+        acc[productId].revenue = this.formatCurrency(revenue);
+        
+        return acc;
+      }, {});
+
+      // Convert to array and sort by total sold
+      return Object.values(productSales)
+        .sort((a: any, b: any) => b.totalSold - a.totalSold)
+        .slice(0, 5);
+    } catch (error) {
+      this.logger.error('Error getting top selling products:', error);
+      return [];
+    }
+  }
+
+  private async getRecentOrders(limit: number = 10) {
+    try {
+      const { data: orders } = await this.supabase
+        .from('orders')
+        .select(`
+          *,
+          profile:user_id (
+            id,
+            full_name,
+            email
+          )
+        `)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      return orders?.map(order => ({
+        id: order.id,
+        totalAmount: this.formatCurrency(order.total_amount || 0),
+        status: order.status,
+        createdAt: order.created_at,
+        user: {
+          fullName: order.profile?.full_name || 'Unknown User',
+          email: order.profile?.email || ''
+        }
+      })) || [];
+    } catch (error) {
+      this.logger.error('Error getting recent orders:', error);
+      return [];
+    }
+  }
+
+  private async getRecentReviews(limit: number = 5) {
+    try {
+      const { data: reviews } = await this.supabase
+        .from('productReview')
+        .select(`
+          *,
+          profile:user_id (
+            id,
+            full_name
+          ),
+          product:product_id (
+            id,
+            name
+          )
+        `)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      return reviews?.map(review => ({
+        id: review.id,
+        rating: review.rating,
+        title: review.title,
+        comment: review.comment,
+        createdAt: review.created_at,
+        user: {
+          fullName: review.profile?.full_name || 'Anonymous'
+        },
+        product: {
+          name: review.product?.name || 'Unknown Product'
+        }
+      })) || [];
+    } catch (error) {
+      this.logger.error('Error getting recent reviews:', error);
+      return [];
+    }
+  }
+
+  private async getSalesChart(startDate: string, endDate: string, period: string) {
+    try {
+      const { data: orders } = await this.supabase
+        .from('orders')
+        .select('total_amount, created_at')
+        .in('status', ['PAID', 'COMPLETED'])
+        .gte('created_at', startDate)
+        .lte('created_at', endDate)
+        .order('created_at', { ascending: true });
+
+      if (!orders || orders.length === 0) {
+        return {
+          labels: [],
+          data: []
+        };
+      }
+
+      // Group orders by period
+      const groupedData = this.groupOrdersByPeriod(orders, period);
+      
+      return {
+        labels: Object.keys(groupedData),
+        data: Object.values(groupedData)
+      };
+    } catch (error) {
+      this.logger.error('Error getting sales chart:', error);
+      return {
+        labels: [],
+        data: []
+      };
+    }
+  }
+
+  private groupOrdersByPeriod(orders: any[], period: string) {
+    const grouped = {};
+    
+    orders.forEach(order => {
+      const date = new Date(order.created_at);
+      let key: string;
+      
+      switch (period) {
+        case 'day':
+          key = `${date.getHours()}:00`;
+          break;
+        case 'week':
+          key = date.toLocaleDateString('en-US', { weekday: 'short' });
+          break;
+        case 'month':
+          key = `Week ${Math.ceil(date.getDate() / 7)}`;
+          break;
+        case 'year':
+          key = date.toLocaleDateString('en-US', { month: 'short' });
+          break;
+        default:
+          key = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      }
+      
+      if (!grouped[key]) {
+        grouped[key] = 0;
+      }
+      
+      grouped[key] += order.total_amount || 0;
+    });
+    
+    return grouped;
+  }
+
+  private formatCurrency(amount: number): string {
+    return new Intl.NumberFormat('en-NG', {
+      style: 'currency',
+      currency: 'NGN',
+      minimumFractionDigits: 2
+    }).format(amount);
   }
 
   // ============= USER MANAGEMENT SERVICES =============

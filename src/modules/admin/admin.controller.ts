@@ -44,14 +44,25 @@ export class AdminController {
 
   // ============= DASHBOARD ENDPOINTS =============
   @Get('dashboard/stats')
-  @ApiOperation({ summary: 'Get admin dashboard statistics' })
+  @ApiOperation({ summary: 'Get comprehensive admin dashboard statistics' })
+  @ApiQuery({ name: 'period', required: false, enum: ['day', 'week', 'month', 'year'], description: 'Time period for stats' })
+  @ApiQuery({ name: 'startDate', required: false, type: String, description: 'Start date for custom period' })
+  @ApiQuery({ name: 'endDate', required: false, type: String, description: 'End date for custom period' })
   @ApiResponse({ 
     status: 200, 
     description: 'Dashboard statistics retrieved successfully',
-    type: SuccessResponseDto<DashboardStatsDto>
+    type: SuccessResponseDto
   })
-  async getDashboardStats(): Promise<SuccessResponseDto<DashboardStatsDto>> {
-    const stats = await this.adminService.getDashboardStats();
+  async getDashboardStats(
+    @Query('period') period?: 'day' | 'week' | 'month' | 'year',
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string
+  ): Promise<SuccessResponseDto<any>> {
+    const stats = await this.adminService.getComprehensiveDashboardStats({
+      period: period || 'week',
+      startDate,
+      endDate
+    });
     return new SuccessResponseDto(stats, 'Dashboard statistics retrieved successfully');
   }
 
