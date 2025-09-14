@@ -30,43 +30,57 @@ export class CustomerSupportService {
   }
 
   async createSupportChat(userId: string, dto: CreateSupportChatDto) {
-    // First create the chat
-    const { data: chat, error: chatError } = await this.supabase
-      .from('support_chat')
-      .insert([{
-        user_id: userId,
-        subject: dto.subject,
-        priority: dto.priority || 'MEDIUM',
-        status: 'OPEN',
-      }])
-      .select('*, user:users(id, email, full_name)')
-      .single();
+    try {
+      // First create the chat
+      const { data: chat, error: chatError } = await this.supabase
+        .from('support_chat')
+        .insert([{
+          user_id: userId,
+          subject: dto.subject,
+          priority: dto.priority || 'MEDIUM',
+          status: 'OPEN',
+        }])
+        .select('*, user:users(id, email, full_name)')
+        .single();
 
-    if (chatError || !chat) {
-      throw new Error('Failed to create support chat');
+      if (chatError) {
+        // Check if it's a table doesn't exist error
+        if (chatError.message.includes('relation') && chatError.message.includes('does not exist')) {
+          throw new Error('Customer support system is not yet set up. Please contact the administrator.');
+        }
+        throw new Error(`Failed to create support chat: ${chatError.message}`);
+      }
+
+      if (!chat) {
+        throw new Error('Failed to create support chat');
+      }
+
+      // Then create the initial message
+      const { data: message, error: messageError } = await this.supabase
+        .from('chat_message')
+        .insert([{
+          chat_id: chat.id,
+          sender_id: userId,
+          message: dto.initialMessage,
+          is_admin: false,
+        }])
+        .select('*, sender:users(id, email, full_name)')
+        .single();
+
+      if (messageError) {
+        // Should probably delete the chat in this case
+        await this.supabase.from('support_chat').delete().eq('id', chat.id);
+        throw new Error(`Failed to create initial message: ${messageError.message}`);
+      }
+
+      return {
+        ...chat,
+        messages: [message],
+      };
+    } catch (error) {
+      console.error('Error in createSupportChat:', error);
+      throw error;
     }
-
-    // Then create the initial message
-    const { data: message, error: messageError } = await this.supabase
-      .from('chat_message')
-      .insert([{
-        chat_id: chat.id,
-        sender_id: userId,
-        message: dto.initialMessage,
-        is_admin: false,
-      }])
-      .select('*, sender:users(id, email, full_name)')
-      .single();
-
-    if (messageError) {
-      // Should probably delete the chat in this case
-      throw new Error('Failed to create initial message');
-    }
-
-    return {
-      ...chat,
-      messages: [message],
-    };
   }
 
   async addMessageToChat(userId: string, dto: CreateChatMessageDto) {
@@ -105,31 +119,41 @@ export class CustomerSupportService {
   }
 
   async getUserChats(userId: string) {
-    const { data: chats, error } = await this.supabase
-      .from('support_chat')
-      .select(`
-        *,
-        messages:chat_message(
+    try {
+      const { data: chats, error } = await this.supabase
+        .from('support_chat')
+        .select(`
           *,
-          sender:users(id, email, full_name)
-        ),
-        messageCount:chat_message(count)
-      `)
-      .eq('user_id', userId)
-      .order('updated_at', { ascending: false });
+          messages:chat_message(
+            *,
+            sender:users(id, email, full_name)
+          ),
+          messageCount:chat_message(count)
+        `)
+        .eq('user_id', userId)
+        .order('updated_at', { ascending: false });
 
-    if (error) {
-      throw new Error('Failed to fetch user chats');
+      if (error) {
+        // Check if it's a table doesn't exist error
+        if (error.message.includes('relation') && error.message.includes('does not exist')) {
+          console.log('Customer support tables not found. Please create them using the migration script.');
+          return []; // Return empty array for now
+        }
+        throw new Error(`Failed to fetch user chats: ${error.message}`);
+      }
+
+      // Transform the data to match the previous format
+      return chats.map(chat => ({
+        ...chat,
+        messages: chat.messages ? chat.messages.slice(0, 1) : [], // Only keep the latest message
+        _count: {
+          messages: chat.messageCount || 0,
+        },
+      }));
+    } catch (error) {
+      console.error('Error in getUserChats:', error);
+      throw new Error(`Failed to fetch user chats: ${error.message}`);
     }
-
-    // Transform the data to match the previous format
-    return chats.map(chat => ({
-      ...chat,
-      messages: chat.messages.slice(0, 1), // Only keep the latest message
-      _count: {
-        messages: chat.messageCount,
-      },
-    }));
   }
 
   async getChatDetails(chatId: string, userId?: string) {
