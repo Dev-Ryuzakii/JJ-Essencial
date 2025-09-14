@@ -32,14 +32,14 @@ export class CustomerSupportService {
   async createSupportChat(userId: string, dto: CreateSupportChatDto) {
     // First create the chat
     const { data: chat, error: chatError } = await this.supabase
-      .from('supportChat')
+      .from('support_chat')
       .insert([{
-        userId,
+        user_id: userId,
         subject: dto.subject,
         priority: dto.priority || 'MEDIUM',
         status: 'OPEN',
       }])
-      .select('*, user:users(id, email, fullName)')
+      .select('*, user:users(id, email, full_name)')
       .single();
 
     if (chatError || !chat) {
@@ -48,14 +48,14 @@ export class CustomerSupportService {
 
     // Then create the initial message
     const { data: message, error: messageError } = await this.supabase
-      .from('chatMessage')
+      .from('chat_message')
       .insert([{
-        chatId: chat.id,
-        senderId: userId,
+        chat_id: chat.id,
+        sender_id: userId,
         message: dto.initialMessage,
-        isAdmin: false,
+        is_admin: false,
       }])
-      .select('*, sender:users(id, email, fullName)')
+      .select('*, sender:users(id, email, full_name)')
       .single();
 
     if (messageError) {
@@ -72,7 +72,7 @@ export class CustomerSupportService {
   async addMessageToChat(userId: string, dto: CreateChatMessageDto) {
     // Verify chat exists and user has access
     const { data: chat, error: chatError } = await this.supabase
-      .from('supportChat')
+      .from('support_chat')
       .select('*, user:users!inner(*)')
       .eq('id', dto.chatId)
       .single();
@@ -82,19 +82,19 @@ export class CustomerSupportService {
     }
 
     // Users can only message their own chats (unless they're support)
-    if (chat.userId !== userId && !dto.isFromSupport) {
+    if (chat.user_id !== userId && !dto.isFromSupport) {
       throw new ForbiddenException('Access denied to this chat');
     }
 
     const { data: message, error: messageError } = await this.supabase
-      .from('chatMessage')
+      .from('chat_message')
       .insert([{
-        chatId: dto.chatId,
-        senderId: userId,
+        chat_id: dto.chatId,
+        sender_id: userId,
         message: dto.message,
-        isAdmin: dto.isFromSupport || false,
+        is_admin: dto.isFromSupport || false,
       }])
-      .select('*, sender:users(id, email, fullName)')
+      .select('*, sender:users(id, email, full_name)')
       .single();
 
     if (messageError || !message) {
@@ -106,17 +106,17 @@ export class CustomerSupportService {
 
   async getUserChats(userId: string) {
     const { data: chats, error } = await this.supabase
-      .from('supportChat')
+      .from('support_chat')
       .select(`
         *,
-        messages:chatMessage(
+        messages:chat_message(
           *,
-          sender:users(id, email, fullName)
+          sender:users(id, email, full_name)
         ),
-        messageCount:chatMessage(count)
+        messageCount:chat_message(count)
       `)
-      .eq('userId', userId)
-      .order('updatedAt', { ascending: false });
+      .eq('user_id', userId)
+      .order('updated_at', { ascending: false });
 
     if (error) {
       throw new Error('Failed to fetch user chats');
@@ -134,17 +134,17 @@ export class CustomerSupportService {
 
   async getChatDetails(chatId: string, userId?: string) {
     const { data: chat, error } = await this.supabase
-      .from('supportChat')
+      .from('support_chat')
       .select(`
         *,
-        user:users(id, email, fullName),
-        messages:chatMessage(
+        user:users(id, email, full_name),
+        messages:chat_message(
           *,
-          sender:users(id, email, fullName)
+          sender:users(id, email, full_name)
         )
       `)
       .eq('id', chatId)
-      .order('messages.createdAt', { referencedTable: 'chatMessage', ascending: true })
+      .order('messages.created_at', { referencedTable: 'chat_message', ascending: true })
       .single();
 
     if (!chat || error) {
@@ -152,7 +152,7 @@ export class CustomerSupportService {
     }
 
     // If userId provided, check access (users can only see their own chats)
-    if (userId && chat.userId !== userId) {
+    if (userId && chat.user_id !== userId) {
       throw new ForbiddenException('Access denied to this chat');
     }
 
@@ -161,10 +161,10 @@ export class CustomerSupportService {
 
   async updateChatStatus(chatId: string, dto: UpdateChatStatusDto) {
     const { data, error } = await this.supabase
-      .from('supportChat')
+      .from('support_chat')
       .update({ status: dto.status })
       .eq('id', chatId)
-      .select('*, user:users(id, email, fullName)')
+      .select('*, user:users(id, email, full_name)')
       .single();
 
     if (error || !data) {
@@ -184,22 +184,22 @@ export class CustomerSupportService {
     const end = start + limit - 1;
 
     let query = this.supabase
-      .from('supportChat')
+      .from('support_chat')
       .select(`
         *,
-        user:users(id, email, fullName),
-        messages:chatMessage(
+        user:users(id, email, full_name),
+        messages:chat_message(
           *,
-          sender:users(id, email, fullName)
+          sender:users(id, email, full_name)
         ),
-        messageCount:chatMessage(count)
+        messageCount:chat_message(count)
       `, { count: 'exact' });
 
     if (status) query = query.eq('status', status);
     if (priority) query = query.eq('priority', priority);
 
     query = query
-      .order('updatedAt', { ascending: false })
+      .order('updated_at', { ascending: false })
       .range(start, end);
 
     const { data: chats, count: total, error } = await query;
@@ -226,27 +226,27 @@ export class CustomerSupportService {
         { data: priorityStats, error: priorityError },
       ] = await Promise.all([
         this.supabase
-          .from('supportChat')
+          .from('support_chat')
           .select('*', { count: 'exact', head: true }),
         this.supabase
-          .from('supportChat')
+          .from('support_chat')
           .select('*', { count: 'exact', head: true })
           .eq('status', 'OPEN'),
         this.supabase
-          .from('supportChat')
+          .from('support_chat')
           .select('*', { count: 'exact', head: true })
           .eq('status', 'IN_PROGRESS'),
         this.supabase
-          .from('supportChat')
+          .from('support_chat')
           .select('*', { count: 'exact', head: true })
           .eq('status', 'CLOSED'),
         this.supabase
-          .from('supportChat')
+          .from('support_chat')
           .select('*', { count: 'exact', head: true })
           .eq('priority', 'HIGH'),
         // Get priority distribution manually
         this.supabase
-          .from('supportChat')
+          .from('support_chat')
           .select('priority')
           .not('priority', 'is', null),
       ]);
@@ -299,13 +299,13 @@ export class CustomerSupportService {
 
   async assignChatToSupport(chatId: string, supportUserId: string) {
     const { data, error } = await this.supabase
-      .from('supportChat')
+      .from('support_chat')
       .update({
-        assignedTo: supportUserId,
+        assigned_to: supportUserId,
         status: 'IN_PROGRESS',
       })
       .eq('id', chatId)
-      .select('*, user:users(id, email, fullName)')
+      .select('*, user:users(id, email, full_name)')
       .single();
 
     if (error || !data) {
