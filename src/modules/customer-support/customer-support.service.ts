@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException, InternalServerErrorException } from '@nestjs/common';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SupabaseConfig } from '../../config/supabase.config';
 
@@ -30,54 +30,97 @@ export class CustomerSupportService {
   }
 
   async createSupportChat(userId: string, dto: CreateSupportChatDto) {
-    // First create the chat
-    const { data: chat, error: chatError } = await this.supabase
-      .from('support_chat')
-      .insert([{
-        user_id: userId,
-        subject: dto.subject,
-        priority: dto.priority || 'MEDIUM',
-        status: 'OPEN',
-      }])
-      .select('*, user:users(id, email, full_name)')
-      .single();
-
-    if (chatError || !chat) {
-      throw new Error('Failed to create support chat');
+    // Validate userId
+    if (!userId) {
+      throw new BadRequestException('User ID is required');
     }
 
-    // Then create the initial message
-    const { data: message, error: messageError } = await this.supabase
-      .from('chat_message')
-      .insert([{
-        chat_id: chat.id,
-        sender_id: userId,
-        message: dto.initialMessage,
-        is_admin: false,
-      }])
-      .select('*, sender:users(id, email, full_name)')
-      .single();
+    try {
+      // First create the chat
+      const { data: chat, error: chatError } = await this.supabase
+        .from('support_chat')
+        .insert([{
+          user_id: userId,
+          subject: dto.subject,
+          priority: dto.priority || 'MEDIUM',
+          status: 'OPEN',
+        }])
+        .select('*, user:profile!user_id(id, email, full_name)')
+        .single();
 
-    if (messageError) {
-      // Should probably delete the chat in this case
-      throw new Error('Failed to create initial message');
+      if (chatError) {
+        // Check if it's a table doesn't exist error
+        if (chatError.message.includes('relation') && chatError.message.includes('does not exist')) {
+          throw new InternalServerErrorException('Customer support system is not yet set up. Please contact the administrator.');
+        }
+        // Check for other common database errors
+        if (chatError.message.includes('invalid input syntax')) {
+          throw new BadRequestException('Invalid data provided for support chat creation');
+        }
+        throw new InternalServerErrorException(`Failed to create support chat: ${chatError.message}`);
+      }
+
+      if (!chat) {
+        throw new InternalServerErrorException('Failed to create support chat');
+      }
+
+      // Then create the initial message
+      const { data: message, error: messageError } = await this.supabase
+        .from('chat_message')
+        .insert([{
+          chat_id: chat.id,
+          sender_id: userId,
+          message: dto.initialMessage,
+          is_admin: false,
+        }])
+        .select('*, sender:profile!sender_id(id, email, full_name)')
+        .single();
+
+      if (messageError) {
+        // Should probably delete the chat in this case
+        await this.supabase.from('support_chat').delete().eq('id', chat.id);
+        // Check for common database errors
+        if (messageError.message.includes('invalid input syntax')) {
+          throw new BadRequestException('Invalid data provided for initial message');
+        }
+        throw new InternalServerErrorException(`Failed to create initial message: ${messageError.message}`);
+      }
+
+      return {
+        ...chat,
+        messages: [message],
+      };
+    } catch (error) {
+      console.error('Error in createSupportChat:', error);
+      // Re-throw NestJS exceptions as-is
+      if (error instanceof BadRequestException || 
+          error instanceof NotFoundException || 
+          error instanceof ForbiddenException || 
+          error instanceof InternalServerErrorException) {
+        throw error;
+      }
+      // Wrap other errors
+      throw new InternalServerErrorException(`Failed to create support chat: ${error.message}`);
     }
-
-    return {
-      ...chat,
-      messages: [message],
-    };
   }
 
   async addMessageToChat(userId: string, dto: CreateChatMessageDto) {
+    // Validate userId
+    if (!userId) {
+      throw new BadRequestException('User ID is required');
+    }
+
     // Verify chat exists and user has access
     const { data: chat, error: chatError } = await this.supabase
       .from('support_chat')
-      .select('*, user:users!inner(*)')
+      .select('*, user:profile!user_id!inner(*)')
       .eq('id', dto.chatId)
       .single();
 
     if (!chat || chatError) {
+      if (chatError && chatError.message.includes('invalid input syntax')) {
+        throw new BadRequestException('Invalid chat ID provided');
+      }
       throw new NotFoundException('Chat not found');
     }
 
@@ -94,53 +137,88 @@ export class CustomerSupportService {
         message: dto.message,
         is_admin: dto.isFromSupport || false,
       }])
-      .select('*, sender:users(id, email, full_name)')
+      .select('*, sender:profile!sender_id(id, email, full_name)')
       .single();
 
     if (messageError || !message) {
-      throw new Error('Failed to create message');
+      if (messageError && messageError.message.includes('invalid input syntax')) {
+        throw new BadRequestException('Invalid data provided for message');
+      }
+      throw new InternalServerErrorException('Failed to create message');
     }
 
     return message;
   }
 
   async getUserChats(userId: string) {
-    const { data: chats, error } = await this.supabase
-      .from('support_chat')
-      .select(`
-        *,
-        messages:chat_message(
-          *,
-          sender:users(id, email, full_name)
-        ),
-        messageCount:chat_message(count)
-      `)
-      .eq('user_id', userId)
-      .order('updated_at', { ascending: false });
-
-    if (error) {
-      throw new Error('Failed to fetch user chats');
+    // Validate userId
+    if (!userId) {
+      throw new BadRequestException('User ID is required');
     }
 
-    // Transform the data to match the previous format
-    return chats.map(chat => ({
-      ...chat,
-      messages: chat.messages.slice(0, 1), // Only keep the latest message
-      _count: {
-        messages: chat.messageCount,
-      },
-    }));
+    try {
+      const { data: chats, error } = await this.supabase
+        .from('support_chat')
+        .select(`
+          *,
+          messages:chat_message(
+            *,
+            sender:profile!sender_id(id, email, full_name)
+          ),
+          messageCount:chat_message(count)
+        `)
+        .eq('user_id', userId)
+        .order('updated_at', { ascending: false });
+
+      if (error) {
+        // Check if it's a table doesn't exist error
+        if (error.message.includes('relation') && error.message.includes('does not exist')) {
+          console.log('Customer support tables not found. Please create them using the migration script.');
+          // Return empty array but with a specific error code that frontend can detect
+          throw new InternalServerErrorException('Customer support system is not yet set up');
+        }
+        if (error.message.includes('invalid input syntax')) {
+          throw new BadRequestException('Invalid user ID provided');
+        }
+        throw new InternalServerErrorException(`Failed to fetch user chats: ${error.message}`);
+      }
+
+      // Transform the data to match the previous format
+      return chats.map(chat => ({
+        ...chat,
+        messages: chat.messages ? chat.messages.slice(0, 1) : [], // Only keep the latest message
+        _count: {
+          messages: chat.messageCount || 0,
+        },
+      }));
+    } catch (error) {
+      console.error('Error in getUserChats:', error);
+      // Re-throw NestJS exceptions as-is
+      if (error instanceof BadRequestException || 
+          error instanceof NotFoundException || 
+          error instanceof ForbiddenException || 
+          error instanceof InternalServerErrorException) {
+        throw error;
+      }
+      // Wrap other errors
+      throw new InternalServerErrorException(`Failed to fetch user chats: ${error.message}`);
+    }
   }
 
   async getChatDetails(chatId: string, userId?: string) {
+    // Validate chatId
+    if (!chatId) {
+      throw new BadRequestException('Chat ID is required');
+    }
+
     const { data: chat, error } = await this.supabase
       .from('support_chat')
       .select(`
         *,
-        user:users(id, email, full_name),
+        user:profile!user_id(id, email, full_name),
         messages:chat_message(
           *,
-          sender:users(id, email, full_name)
+          sender:profile!sender_id(id, email, full_name)
         )
       `)
       .eq('id', chatId)
@@ -148,6 +226,9 @@ export class CustomerSupportService {
       .single();
 
     if (!chat || error) {
+      if (error && error.message.includes('invalid input syntax')) {
+        throw new BadRequestException('Invalid chat ID provided');
+      }
       throw new NotFoundException('Chat not found');
     }
 
@@ -160,15 +241,23 @@ export class CustomerSupportService {
   }
 
   async updateChatStatus(chatId: string, dto: UpdateChatStatusDto) {
+    // Validate chatId
+    if (!chatId) {
+      throw new BadRequestException('Chat ID is required');
+    }
+
     const { data, error } = await this.supabase
       .from('support_chat')
       .update({ status: dto.status })
       .eq('id', chatId)
-      .select('*, user:users(id, email, full_name)')
+      .select('*, user:profile!user_id(id, email, full_name)')
       .single();
 
     if (error || !data) {
-      throw new Error('Failed to update chat status');
+      if (error && error.message.includes('invalid input syntax')) {
+        throw new BadRequestException('Invalid data provided for chat status update');
+      }
+      throw new InternalServerErrorException('Failed to update chat status');
     }
 
     return data;
@@ -187,10 +276,10 @@ export class CustomerSupportService {
       .from('support_chat')
       .select(`
         *,
-        user:users(id, email, full_name),
+        user:profile!user_id(id, email, full_name),
         messages:chat_message(
           *,
-          sender:users(id, email, full_name)
+          sender:profile!sender_id(id, email, full_name)
         ),
         messageCount:chat_message(count)
       `, { count: 'exact' });
@@ -204,13 +293,31 @@ export class CustomerSupportService {
 
     const { data: chats, count: total, error } = await query;
 
+    if (error) {
+      if (error.message.includes('relation') && error.message.includes('does not exist')) {
+        throw new InternalServerErrorException('Customer support system is not yet set up');
+      }
+      if (error.message.includes('invalid input syntax')) {
+        throw new BadRequestException('Invalid parameters provided for chat listing');
+      }
+      throw new InternalServerErrorException(`Failed to fetch chats: ${error.message}`);
+    }
+
+    const transformedChats = chats.map(chat => ({
+      ...chat,
+      messages: chat.messages ? [chat.messages[0]] : [], // Only keep the latest message
+      _count: {
+        messages: chat.messageCount || 0,
+      },
+    }));
+
     return {
-      chats,
+      chats: transformedChats,
       pagination: {
         page,
         limit,
-        total,
-        totalPages: Math.ceil(total / limit),
+        total: total || 0,
+        totalPages: Math.ceil((total || 0) / limit),
       },
     };
   }
@@ -251,6 +358,13 @@ export class CustomerSupportService {
           .not('priority', 'is', null),
       ]);
 
+      if (priorityError) {
+        if (priorityError.message.includes('relation') && priorityError.message.includes('does not exist')) {
+          throw new InternalServerErrorException('Customer support system is not yet set up');
+        }
+        throw new InternalServerErrorException(`Failed to fetch chat stats: ${priorityError.message}`);
+      }
+
       // Safely process priority stats
       const chatsByPriority: Record<string, number> = {};
       if (priorityStats && Array.isArray(priorityStats)) {
@@ -281,23 +395,27 @@ export class CustomerSupportService {
       };
     } catch (error) {
       console.error('Error getting chat stats:', error);
-      // Return default stats if there's an error
-      return {
-        totalChats: 0,
-        openChats: 0,
-        inProgressChats: 0,
-        closedChats: 0,
-        highPriorityChats: 0,
-        chatsByPriority: {
-          LOW: 0,
-          MEDIUM: 0,
-          HIGH: 0,
-        },
-      };
+      // Re-throw NestJS exceptions as-is
+      if (error instanceof BadRequestException || 
+          error instanceof NotFoundException || 
+          error instanceof ForbiddenException || 
+          error instanceof InternalServerErrorException) {
+        throw error;
+      }
+      // Wrap other errors
+      throw new InternalServerErrorException(`Failed to fetch chat stats: ${error.message}`);
     }
   }
 
   async assignChatToSupport(chatId: string, supportUserId: string) {
+    // Validate parameters
+    if (!chatId) {
+      throw new BadRequestException('Chat ID is required');
+    }
+    if (!supportUserId) {
+      throw new BadRequestException('Support user ID is required');
+    }
+
     const { data, error } = await this.supabase
       .from('support_chat')
       .update({
@@ -305,11 +423,14 @@ export class CustomerSupportService {
         status: 'IN_PROGRESS',
       })
       .eq('id', chatId)
-      .select('*, user:users(id, email, full_name)')
+      .select('*, user:profile!user_id(id, email, full_name)')
       .single();
 
     if (error || !data) {
-      throw new Error('Failed to assign chat to support');
+      if (error && error.message.includes('invalid input syntax')) {
+        throw new BadRequestException('Invalid IDs provided for chat assignment');
+      }
+      throw new InternalServerErrorException('Failed to assign chat to support');
     }
 
     return data;
