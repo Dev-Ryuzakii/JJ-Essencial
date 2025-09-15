@@ -45,6 +45,7 @@ async function bootstrap() {
         'http://localhost:3000', // Alternative development
         'http://localhost:5174', // Alternative Vite dev server
         'http://127.0.0.1:5173', // Alternative localhost format
+        'http://jandjessential.org',
         ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []), // Dynamic frontend URL
       ];
       
