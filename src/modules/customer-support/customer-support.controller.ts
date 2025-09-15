@@ -115,7 +115,7 @@ export class CustomerSupportController {
 
   @Get('chat/:chatId')
   async getChatDetails(@Request() req, @Param('chatId') chatId: string) {
-    this.logger.log(`Fetching chat details: ${chatId} for user: ${req.user?.sub}`);
+    this.logger.log(`Fetching chat details: ${chatId} for user: ${req.user?.sub || req.user?.id}`);
     this.logger.log(`Full user object: ${JSON.stringify(req.user)}`);
     
     if (!req.user) {
@@ -123,8 +123,13 @@ export class CustomerSupportController {
       throw new BadRequestException('User not authenticated');
     }
     
-    // Use id if available, otherwise use sub
-    const userId = req.user?.id || req.user?.sub;
+    // Use id if available, otherwise use sub, fallback to email if needed
+    const userId = req.user?.id || req.user?.sub || req.user?.email;
+    
+    if (!userId) {
+      this.logger.error('User ID not found in user object');
+      throw new BadRequestException('Unable to identify user');
+    }
     
     try {
       // Regular users can only see their own chats

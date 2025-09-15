@@ -211,6 +211,8 @@ export class CustomerSupportService {
       throw new BadRequestException('Chat ID is required');
     }
 
+    console.log(`Fetching chat details for chatId: ${chatId}, userId: ${userId}`);
+
     const { data: chat, error } = await this.supabase
       .from('support_chat')
       .select(`
@@ -222,18 +224,27 @@ export class CustomerSupportService {
         )
       `)
       .eq('id', chatId)
-      .order('messages.created_at', { referencedTable: 'chat_message', ascending: true })
+      .order('created_at', { foreignTable: 'chat_message', ascending: true })
       .single();
 
-    if (!chat || error) {
-      if (error && error.message.includes('invalid input syntax')) {
+    if (error) {
+      console.error(`Error fetching chat ${chatId}:`, error);
+      if (error.message.includes('invalid input syntax')) {
         throw new BadRequestException('Invalid chat ID provided');
       }
+      throw new InternalServerErrorException(`Failed to fetch chat: ${error.message}`);
+    }
+
+    if (!chat) {
+      console.warn(`Chat not found: ${chatId}`);
       throw new NotFoundException('Chat not found');
     }
 
+    console.log(`Found chat ${chatId} for user ${chat.user_id}, requested by user ${userId}`);
+
     // If userId provided, check access (users can only see their own chats)
     if (userId && chat.user_id !== userId) {
+      console.warn(`Access denied - User ${userId} tried to access chat ${chatId} belonging to user ${chat.user_id}`);
       throw new ForbiddenException('Access denied to this chat');
     }
 
