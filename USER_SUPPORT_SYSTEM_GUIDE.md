@@ -9,16 +9,16 @@ The JJ-Essential platform includes a comprehensive customer support system that 
 The customer support system provides both user-facing and admin-facing endpoints:
 
 **User Endpoints** (for customers):
-- `POST /customer-support/chat` - Create a new support ticket
-- `GET /customer-support/my-chats` - Get user's support tickets
-- `GET /customer-support/chat/:chatId` - Get specific chat details
-- `POST /customer-support/chat/:chatId/message` - Send a message to support
+- `POST /api/v1/customer-support/chat` - Create a new support ticket
+- `GET /api/v1/customer-support/my-chats` - Get user's support tickets
+- `GET /api/v1/customer-support/chat/:chatId` - Get specific chat details
+- `POST /api/v1/customer-support/chat/:chatId/message` - Send a message to support
 
 **Admin Endpoints** (for support staff):
-- `GET /customer-support/admin/chats` - Get all support tickets
-- `PUT /customer-support/admin/chat/:chatId/status` - Update ticket status
-- `PUT /customer-support/admin/chat/:chatId/assign` - Assign ticket to support staff
-- `GET /customer-support/admin/stats` - Get support statistics
+- `GET /api/v1/customer-support/admin/chats` - Get all support tickets
+- `PUT /api/v1/customer-support/admin/chat/:chatId/status` - Update ticket status
+- `PUT /api/v1/customer-support/admin/chat/:chatId/assign` - Assign ticket to support staff
+- `GET /api/v1/customer-support/admin/stats` - Get support statistics
 
 ## User API Integration
 
@@ -90,17 +90,17 @@ export interface SupportTicketDetail {
 
 ### User Support API Client
 
-```typescript
+```
 import { get, post } from './apiClient';
 
 const userSupportApi = {
   /**
    * Create a new support ticket
-   * POST /customer-support/chat
+   * POST /api/v1/customer-support/chat
    */
   createTicket: async (ticketData: CreateSupportTicketDto): Promise<UserSupportTicket> => {
     try {
-      const response = await post<UserSupportTicket>('/customer-support/chat', ticketData);
+      const response = await post<UserSupportTicket>('/api/v1/customer-support/chat', ticketData);
       
       if (response.data) {
         return response.data;
@@ -115,11 +115,11 @@ const userSupportApi = {
 
   /**
    * Get user's support tickets
-   * GET /customer-support/my-chats
+   * GET /api/v1/customer-support/my-chats
    */
   getMyTickets: async (): Promise<UserSupportTicket[]> => {
     try {
-      const response = await get<UserSupportTicket[]>('/customer-support/my-chats');
+      const response = await get<UserSupportTicket[]>('/api/v1/customer-support/my-chats');
       
       if (response.data) {
         return response.data;
@@ -134,11 +134,11 @@ const userSupportApi = {
 
   /**
    * Get support ticket details with full conversation
-   * GET /customer-support/chat/:chatId
+   * GET /api/v1/customer-support/chat/:chatId
    */
   getTicketDetails: async (ticketId: string): Promise<SupportTicketDetail> => {
     try {
-      const response = await get<SupportTicketDetail>(`/customer-support/chat/${ticketId}`);
+      const response = await get<SupportTicketDetail>(`/api/v1/customer-support/chat/${ticketId}`);
       
       if (response.data) {
         return response.data;
@@ -153,11 +153,11 @@ const userSupportApi = {
 
   /**
    * Send a message to support ticket
-   * POST /customer-support/chat/:chatId/message
+   * POST /api/v1/customer-support/chat/:chatId/message
    */
   sendMessage: async (ticketId: string, messageData: SendMessageDto): Promise<any> => {
     try {
-      const response = await post(`/customer-support/chat/${ticketId}/message`, messageData);
+      const response = await post(`/api/v1/customer-support/chat/${ticketId}/message`, messageData);
       
       if (response.data) {
         return response.data;
@@ -311,7 +311,7 @@ export default SupportTicketList;
 
 ### 2. Create Support Ticket Component
 
-```typescript
+``typescript
 import React, { useState } from 'react';
 import { Send } from 'lucide-react';
 import userSupportApi, { CreateSupportTicketDto } from '../services/userSupportApi';
@@ -451,7 +451,7 @@ export default CreateSupportTicket;
 
 ### 3. Support Ticket Chat Component
 
-```typescript
+``typescript
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, User, Headphones } from 'lucide-react';
 import userSupportApi, { SupportTicketDetail, SendMessageDto } from '../services/userSupportApi';
