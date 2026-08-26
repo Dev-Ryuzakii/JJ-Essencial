@@ -32,34 +32,11 @@ async function bootstrap() {
   const port = process.env.PORT || configService.get('app.port') || 3000;
   const apiPrefix = configService.get('app.apiPrefix') || '';
 
-  // CORS configuration with specific origins
+  // CORS configuration - allow all origins
+  // `origin: true` reflects the request's Origin header rather than sending `*`,
+  // which is required because `credentials: true` makes browsers reject a `*` value.
   const corsOptions = {
-    origin: function (origin, callback) {
-      // Allow requests with no origin (like mobile apps or Postman)
-      if (!origin) return callback(null, true);
-      
-      const allowedOrigins = [
-        'https://essentialbyjay-nu.vercel.app',
-        'https://jj-essencial.onrender.com', // Deployed backend domain
-        'http://localhost:5173', // Development frontend
-        'http://localhost:3000', // Alternative development
-        'http://localhost:5174', // Alternative Vite dev server
-        'http://127.0.0.1:5173', // Alternative localhost format
-        'http://jandjessential.org',
-        ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []), // Dynamic frontend URL
-      ];
-      
-      // Check for exact match or Vercel app pattern
-      const isVercelApp = origin.match(/^https:\/\/.*\.vercel\.app$/);
-      const isAllowed = allowedOrigins.includes(origin) || isVercelApp;
-      
-      if (isAllowed) {
-        callback(null, true);
-      } else {
-        logger.warn(`❌ CORS blocked origin: ${origin}`);
-        callback(new Error(`Origin ${origin} not allowed by CORS policy`));
-      }
-    },
+    origin: true,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
@@ -79,7 +56,7 @@ async function bootstrap() {
   
   // Log CORS configuration for debugging
   logger.log('✅ CORS Configuration Applied');
-  logger.log(`🌍 Allowed origins include: localhost:5173, jj-essencial.onrender.com, *.vercel.app`);
+  logger.log(`🌍 Allowed origins: all (request Origin is reflected)`);
   logger.log(`🔑 Credentials enabled: ${corsOptions.credentials}`);
   logger.log(`📝 Methods: ${corsOptions.methods.join(', ')}`);
   logger.log(`🎯 Headers: ${corsOptions.allowedHeaders.join(', ')}`);
