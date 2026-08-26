@@ -33,7 +33,7 @@ model Profile {
   uploadedReceipts PaymentReceipt[] @relation("ReceiptUploader")
   verifiedReceipts PaymentReceipt[] @relation("ReceiptVerifier")
 
-  @@map("profiles")
+  @@map("profile")
 }
 
 // User addresses for delivery and billing
@@ -60,7 +60,7 @@ model UserAddress {
   user   Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
   orders Orders[]
 
-  @@map("user_addresses")
+  @@map("user_address")
 }
 
 model Product {
@@ -93,7 +93,7 @@ model Product {
   reviews         ProductReview[]
   stockMovements  StockMovement[]
 
-  @@map("products")
+  @@map("product")
 }
 
 model Orders {
@@ -141,7 +141,7 @@ model OrderItem {
   order   Orders  @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id])
 
-  @@map("order_items")
+  @@map("order_item")
 }
 
 model Trade {
@@ -159,7 +159,7 @@ model Trade {
   seller  Profile @relation(fields: [sellerId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id])
 
-  @@map("trades")
+  @@map("trade")
 }
 
 model PaymentTransaction {
@@ -177,7 +177,7 @@ model PaymentTransaction {
   order         Orders?       @relation(fields: [orderId], references: [id], onDelete: SetNull)
   receipts      PaymentReceipt[]
 
-  @@map("payment_transactions")
+  @@map("payment_transaction")
 }
 
 model PaymentReceipt {
@@ -199,7 +199,7 @@ model PaymentReceipt {
   uploader        Profile            @relation("ReceiptUploader", fields: [uploadedBy], references: [id])
   verifier        Profile?           @relation("ReceiptVerifier", fields: [verifiedBy], references: [id])
 
-  @@map("payment_receipts")
+  @@map("payment_receipt")
 }
 
 // Add bank account information model
@@ -236,7 +236,7 @@ model Category {
   children   Category[] @relation("CategoryHierarchy")
   products   Product[]
 
-  @@map("categories")
+  @@map("category")
 }
 
 // Wishlist/Favorites
@@ -251,7 +251,7 @@ model WishlistItem {
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@unique([userId, productId])
-  @@map("wishlist_items")
+  @@map("wishlist_item")
 }
 
 // Product Reviews & Ratings
@@ -275,7 +275,7 @@ model ProductReview {
   order   Orders? @relation(fields: [orderId], references: [id])
 
   @@unique([userId, productId, orderId])
-  @@map("product_reviews")
+  @@map("product_review")
 }
 
 // Stock Movement Tracking
@@ -294,7 +294,7 @@ model StockMovement {
   // Relations
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  @@map("stock_movements")
+  @@map("stock_movement")
 }
 
 // Order Status Tracking
@@ -327,7 +327,7 @@ model SupportChat {
   user     Profile       @relation(fields: [userId], references: [id], onDelete: Cascade)
   messages ChatMessage[]
 
-  @@map("support_chats")
+  @@map("support_chat")
 }
 
 model ChatMessage {
@@ -342,7 +342,7 @@ model ChatMessage {
   chat   SupportChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
   sender Profile     @relation(fields: [senderId], references: [id], onDelete: Cascade)
 
-  @@map("chat_messages")
+  @@map("chat_message")
 }
 
 // Enums

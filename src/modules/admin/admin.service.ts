@@ -382,7 +382,7 @@ export class AdminService {
   private async getRecentReviews(limit: number = 5) {
     try {
       const { data: reviews } = await this.supabase
-        .from('productReview')
+        .from('product_review')
         .select(`
           *,
           profile:user_id (
@@ -1103,7 +1103,7 @@ export class AdminService {
     try {
       // Check if category has products
       const { count: productCount } = await this.supabase
-        .from('products')
+        .from('product')
         .select('*', { count: 'exact', head: true })
         .eq('category_id', id);
 
@@ -1203,16 +1203,16 @@ export class AdminService {
   async getInventoryAnalytics() {
     try {
       const { count: totalProducts } = await this.supabase
-        .from('products')
+        .from('product')
         .select('*', { count: 'exact', head: true });
 
       const { count: lowStockProducts } = await this.supabase
-        .from('products')
+        .from('product')
         .select('*', { count: 'exact', head: true })
         .lte('stock', 10);
 
       const { count: outOfStockProducts } = await this.supabase
-        .from('products')
+        .from('product')
         .select('*', { count: 'exact', head: true })
         .eq('stock', 0);
 

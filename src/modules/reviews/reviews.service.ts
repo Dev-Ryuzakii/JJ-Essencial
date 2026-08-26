@@ -21,7 +21,7 @@ export class ReviewsService {
       .from('product')
       .select('*')
       .eq('id', productId)
-      .eq('isActive', true)
+      .eq('is_active', true)
       .single();
 
     if (!product) {
@@ -30,11 +30,11 @@ export class ReviewsService {
 
     // Check if user has already reviewed this product
     const { data: existingReview } = await this.supabase
-      .from('productReview')
+      .from('product_review')
       .select('*')
-      .eq('userId', userId)
-      .eq('productId', productId)
-      .eq('orderId', orderId || null)
+      .eq('user_id', userId)
+      .eq('product_id', productId)
+      .eq('order_id', orderId || null)
       .single();
 
     if (existingReview) {
@@ -45,12 +45,12 @@ export class ReviewsService {
     let isVerified = false;
     if (orderId) {
       const { data: orderItems } = await this.supabase
-        .from('orderItems')
+        .from('order_item')
         .select('orders!inner(*)')
         .eq('orders.id', orderId)
         .eq('orders.userId', userId)
         .in('orders.status', ['PAID', 'COMPLETED'])
-        .eq('productId', productId)
+        .eq('product_id', productId)
         .single();
 
       if (orderItems) {
@@ -61,24 +61,24 @@ export class ReviewsService {
     }
 
     const { data: user } = await this.supabase
-      .from('users')
-      .select('id, fullName, avatar')
+      .from('profile')
+      .select('id, full_name, avatar')
       .eq('id', userId)
       .single();
 
     const { data: review } = await this.supabase
-      .from('productReview')
+      .from('product_review')
       .insert([{
-        userId,
-        productId,
-        orderId,
+        user_id: userId,
+        product_id: productId,
+        order_id: orderId,
         rating,
         title,
         comment,
         images: images || [],
-        isVerified,
+        is_verified: isVerified,
       }])
-      .select('*, user:users(id, fullName, avatar)')
+      .select('*, user:profile(id, full_name, avatar)')
       .single();
 
     // Update product rating
@@ -95,7 +95,7 @@ export class ReviewsService {
       .from('product')
       .select('*')
       .eq('id', productId)
-      .eq('isActive', true)
+      .eq('is_active', true)
       .single();
 
     if (!product) {
@@ -104,11 +104,11 @@ export class ReviewsService {
 
     // Check if user has already reviewed this product
     const { data: existingReview } = await this.supabase
-      .from('productReview')
+      .from('product_review')
       .select('*')
-      .eq('userId', userId)
-      .eq('productId', productId)
-      .eq('orderId', orderId || null)
+      .eq('user_id', userId)
+      .eq('product_id', productId)
+      .eq('order_id', orderId || null)
       .single();
 
     if (existingReview) {
@@ -126,12 +126,12 @@ export class ReviewsService {
     let isVerified = false;
     if (orderId) {
       const { data: orderItems } = await this.supabase
-        .from('orderItems')
+        .from('order_item')
         .select('orders!inner(*)')
         .eq('orders.id', orderId)
         .eq('orders.userId', userId)
         .in('orders.status', ['PAID', 'COMPLETED'])
-        .eq('productId', productId)
+        .eq('product_id', productId)
         .single();
 
       if (orderItems) {
@@ -142,18 +142,18 @@ export class ReviewsService {
     }
 
     const { data: review } = await this.supabase
-      .from('productReview')
+      .from('product_review')
       .insert([{
-        userId,
-        productId,
-        orderId,
+        user_id: userId,
+        product_id: productId,
+        order_id: orderId,
         rating,
         title,
         comment,
         images: imageUrls,
-        isVerified,
+        is_verified: isVerified,
       }])
-      .select('*, user:users(id, fullName, avatar)')
+      .select('*, user:profile(id, full_name, avatar)')
       .single();
 
     // Update product rating
@@ -172,18 +172,18 @@ export class ReviewsService {
 
     const [{ data: reviews, count }, { count: total }] = await Promise.all([
       this.supabase
-        .from('productReview')
-        .select('*, user:users(id, fullName, avatar)', { count: 'exact' })
-        .eq('productId', productId)
-        .eq('isVisible', true)
-        .order('isVerified', { ascending: false })
-        .order('createdAt', { ascending: false })
+        .from('product_review')
+        .select('*, user:profile(id, full_name, avatar)', { count: 'exact' })
+        .eq('product_id', productId)
+        .eq('is_visible', true)
+        .order('is_verified', { ascending: false })
+        .order('created_at', { ascending: false })
         .range(start, end),
       this.supabase
-        .from('productReview')
+        .from('product_review')
         .select('id', { count: 'exact', head: true })
-        .eq('productId', productId)
-        .eq('isVisible', true)
+        .eq('product_id', productId)
+        .eq('is_visible', true)
     ]);
 
     return {
@@ -202,15 +202,15 @@ export class ReviewsService {
 
     const [{ data: reviews, count }, { count: total }] = await Promise.all([
       this.supabase
-        .from('productReview')
-        .select('*, user:users(id, fullName, avatar)', { count: 'exact' })
-        .eq('userId', userId)
-        .order('createdAt', { ascending: false })
+        .from('product_review')
+        .select('*, user:profile(id, full_name, avatar)', { count: 'exact' })
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
         .range(start, end),
       this.supabase
-        .from('productReview')
+        .from('product_review')
         .select('id', { count: 'exact', head: true })
-        .eq('userId', userId)
+        .eq('user_id', userId)
     ]);
 
     return {
@@ -225,7 +225,7 @@ export class ReviewsService {
     updateReviewDto: UpdateReviewDto,
   ): Promise<ReviewResponseDto> {
     const { data: existingReview } = await this.supabase
-      .from('productReview')
+      .from('product_review')
       .select('*')
       .eq('id', reviewId)
       .single();
@@ -239,7 +239,7 @@ export class ReviewsService {
     }
 
     const { data: updatedReview } = await this.supabase
-      .from('productReview')
+      .from('product_review')
       .update({
         rating: updateReviewDto.rating,
         title: updateReviewDto.title,
@@ -247,7 +247,7 @@ export class ReviewsService {
         images: updateReviewDto.images,
       })
       .eq('id', reviewId)
-      .select('*, user:users(id, fullName, avatar)')
+      .select('*, user:profile(id, full_name, avatar)')
       .single();
 
     // Update product rating if rating changed
@@ -260,7 +260,7 @@ export class ReviewsService {
 
   async deleteReview(userId: string, reviewId: string): Promise<void> {
     const { data: existingReview } = await this.supabase
-      .from('productReview')
+      .from('product_review')
       .select('*')
       .eq('id', reviewId)
       .single();
@@ -274,7 +274,7 @@ export class ReviewsService {
     }
 
     await this.supabase
-      .from('productReview')
+      .from('product_review')
       .delete()
       .eq('id', reviewId);
 
@@ -284,10 +284,10 @@ export class ReviewsService {
 
   async getProductRatingStats(productId: string): Promise<ProductRatingStatsDto> {
     const { data: reviews } = await this.supabase
-      .from('productReview')
+      .from('product_review')
       .select('rating')
-      .eq('productId', productId)
-      .eq('isVisible', true);
+      .eq('product_id', productId)
+      .eq('is_visible', true);
 
     if (!reviews) {
       return {
@@ -329,29 +329,31 @@ export class ReviewsService {
     await this.supabase
       .from('product')
       .update({
-        avgRating: stats.averageRating,
-        reviewCount: stats.totalReviews,
+        avg_rating: stats.averageRating,
+        review_count: stats.totalReviews,
       })
       .eq('id', productId);
   }
 
   private mapToResponseDto(review: any): ReviewResponseDto {
     return {
+      // The keys are the API's shape, which clients already parse. The values
+      // read the row, and a row comes back named the way the column is.
       id: review.id,
-      userId: review.userId,
-      productId: review.productId,
-      orderId: review.orderId,
+      userId: review.user_id,
+      productId: review.product_id,
+      orderId: review.order_id,
       rating: review.rating,
       title: review.title,
       comment: review.comment,
       images: review.images,
-      isVerified: review.isVerified,
-      isVisible: review.isVisible,
-      createdAt: review.createdAt,
-      updatedAt: review.updatedAt,
+      isVerified: review.is_verified,
+      isVisible: review.is_visible,
+      createdAt: review.created_at,
+      updatedAt: review.updated_at,
       user: {
         id: review.user.id,
-        fullName: review.user.fullName,
+        fullName: review.user.full_name,
         avatar: review.user.avatar,
       },
     };

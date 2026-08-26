@@ -29,25 +29,25 @@ export class AnalyticsService {
         recentReviews,
       ] = await Promise.all([
         // Total counts
-        this.supabase.from('product').select('*', { count: 'exact', head: true }).eq('isActive', true),
+        this.supabase.from('product').select('*', { count: 'exact', head: true }).eq('is_active', true),
         this.supabase.from('orders').select('*', { count: 'exact', head: true }),
-        this.supabase.from('profile').select('*', { count: 'exact', head: true }).eq('isActive', true),
+        this.supabase.from('profile').select('*', { count: 'exact', head: true }).eq('is_active', true),
 
         // Today's stats
         this.supabase.from('orders').select('*', { count: 'exact', head: true })
-          .gte('createdAt', yesterday.toISOString()),
+          .gte('created_at', yesterday.toISOString()),
 
         // Weekly stats
         this.supabase.from('orders').select('*', { count: 'exact', head: true })
-          .gte('createdAt', sevenDaysAgo.toISOString()),
+          .gte('created_at', sevenDaysAgo.toISOString()),
 
         // Monthly stats
         this.supabase.from('orders').select('*', { count: 'exact', head: true })
-          .gte('createdAt', thirtyDaysAgo.toISOString()),
+          .gte('created_at', thirtyDaysAgo.toISOString()),
 
         // Low stock products
         this.supabase.from('product').select('*', { count: 'exact', head: true })
-          .eq('isActive', true)
+          .eq('is_active', true)
           .lte('stock', 10),
 
         // Pending orders
@@ -55,8 +55,8 @@ export class AnalyticsService {
           .eq('status', 'PENDING'),
 
         // Recent reviews
-        this.supabase.from('productReview').select('*', { count: 'exact', head: true })
-          .gte('createdAt', sevenDaysAgo.toISOString()),
+        this.supabase.from('product_review').select('*', { count: 'exact', head: true })
+          .gte('created_at', sevenDaysAgo.toISOString()),
       ]);
 
       // Calculate revenues
@@ -125,8 +125,8 @@ export class AnalyticsService {
       const { data: orders } = await this.supabase
         .from('orders')
         .select('*')
-        .gte('createdAt', startDate.toISOString())
-        .order('createdAt', { ascending: true });
+        .gte('created_at', startDate.toISOString())
+        .order('created_at', { ascending: true });
 
       const dailySalesMap = new Map();
       orders.forEach(order => {
@@ -149,7 +149,7 @@ export class AnalyticsService {
       const dailySales = Array.from(dailySalesMap.values());
 
       const { data: orderItems } = await this.supabase
-        .from('orderItem')
+        .from('order_item')
         .select(`
           *,
           product:products (
@@ -187,7 +187,7 @@ export class AnalyticsService {
       const { data: categories } = await this.supabase
         .from('category')
         .select('*')
-        .eq('isActive', true);
+        .eq('is_active', true);
 
       const salesByCategory = categories.map(category => ({
         category: category.name,
@@ -229,12 +229,12 @@ export class AnalyticsService {
 
       const { data: recentProfiles } = await this.supabase
         .from('profile')
-        .select('id, createdAt')
-        .gte('createdAt', thirtyDaysAgo.toISOString());
+        .select('id, created_at')
+        .gte('created_at', thirtyDaysAgo.toISOString());
 
       const monthlySignupsMap = new Map();
       recentProfiles.forEach(profile => {
-        const month = new Date(profile.createdAt).toISOString().slice(0, 7);
+        const month = new Date(profile.created_at).toISOString().slice(0, 7);
         
         if (!monthlySignupsMap.has(month)) {
           monthlySignupsMap.set(month, { 
@@ -262,7 +262,7 @@ export class AnalyticsService {
             createdAt
           )
         `)
-        .eq('isActive', true);
+        .eq('is_active', true);
 
       const topCustomers = profiles
         .map(profile => {
@@ -314,15 +314,15 @@ export class AnalyticsService {
     try {
       const { data: products } = await this.supabase
         .from('product')
-        .select('id, name, stock, lowStockThreshold, price, isActive')
-        .eq('isActive', true)
+        .select('id, name, stock, low_stock_threshold, price, is_active')
+        .eq('is_active', true)
         .order('stock', { ascending: true });
 
       const stockLevels = products.map(product => ({
         id: product.id,
         name: product.name,
         stock: product.stock,
-        lowStockThreshold: product.lowStockThreshold || 10,
+        lowStockThreshold: product.low_stock_threshold || 10,
         price: Number(product.price),
       }));
 
@@ -368,7 +368,7 @@ export class AnalyticsService {
       const { data: statusOrders } = await this.supabase
         .from('orders')
         .select('status')
-        .gte('createdAt', thirtyDaysAgo.toISOString());
+        .gte('created_at', thirtyDaysAgo.toISOString());
       
       const statusCount = statusOrders.reduce((acc, order) => {
         acc[order.status] = (acc[order.status] || 0) + 1;
@@ -382,17 +382,17 @@ export class AnalyticsService {
 
       const { data: ordersWithAmount } = await this.supabase
         .from('orders')
-        .select('id, totalAmount, createdAt')
-        .gte('createdAt', thirtyDaysAgo.toISOString())
+        .select('id, total_amount, created_at')
+        .gte('created_at', thirtyDaysAgo.toISOString())
         .neq('status', 'CANCELLED')
-        .order('createdAt', { ascending: true });
+        .order('created_at', { ascending: true });
 
       const avgOrderValue = ordersWithAmount.reduce((sum, order) => 
-        sum + Number(order.totalAmount), 0) / (ordersWithAmount.length || 1);
+        sum + Number(order.total_amount), 0) / (ordersWithAmount.length || 1);
 
       const dailyOrdersMap = new Map();
       ordersWithAmount.forEach(order => {
-        const date = new Date(order.createdAt).toISOString().split('T')[0];
+        const date = new Date(order.created_at).toISOString().split('T')[0];
         
         if (!dailyOrdersMap.has(date)) {
           dailyOrdersMap.set(date, { 
@@ -405,8 +405,8 @@ export class AnalyticsService {
         
         const dayData = dailyOrdersMap.get(date);
         dayData.order_count += 1;
-        dayData.total_amounts.push(Number(order.totalAmount));
-        dayData.total_revenue += Number(order.totalAmount);
+        dayData.total_amounts.push(Number(order.total_amount));
+        dayData.total_revenue += Number(order.total_amount);
         dailyOrdersMap.set(date, dayData);
       });
 
@@ -440,15 +440,15 @@ export class AnalyticsService {
       const { count: totalCustomers } = await this.supabase
         .from('profile')
         .select('*', { count: 'exact', head: true })
-        .eq('isActive', true);
+        .eq('is_active', true);
 
       const { data: orders } = await this.supabase
         .from('orders')
-        .select('userId');
+        .select('user_id');
 
       const userOrderCounts = new Map();
       orders.forEach(order => {
-        userOrderCounts.set(order.userId, (userOrderCounts.get(order.userId) || 0) + 1);
+        userOrderCounts.set(order.user_id, (userOrderCounts.get(order.user_id) || 0) + 1);
       });
       
       const repeatCustomers = Array.from(userOrderCounts.values()).filter(count => count > 1).length;
@@ -476,10 +476,10 @@ export class AnalyticsService {
     try {
       const { data: orders } = await this.supabase
         .from('orders')
-        .select('totalAmount')
+        .select('total_amount')
         .in('status', ['PAID', 'COMPLETED']);
 
-      return orders.reduce((sum, order) => sum + Number(order.totalAmount), 0);
+      return orders.reduce((sum, order) => sum + Number(order.total_amount), 0);
     } catch (error) {
       console.error('Error calculating total revenue:', error);
       return 0;
@@ -490,11 +490,11 @@ export class AnalyticsService {
     try {
       const { data: orders } = await this.supabase
         .from('orders')
-        .select('totalAmount')
-        .gte('createdAt', startDate.toISOString())
+        .select('total_amount')
+        .gte('created_at', startDate.toISOString())
         .in('status', ['PAID', 'COMPLETED']);
 
-      return orders.reduce((sum, order) => sum + Number(order.totalAmount), 0);
+      return orders.reduce((sum, order) => sum + Number(order.total_amount), 0);
     } catch (error) {
       console.error('Error calculating revenue by period:', error);
       return 0;

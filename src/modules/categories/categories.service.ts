@@ -168,7 +168,7 @@ export class CategoriesService {
           name,
           slug
         ),
-        children:category (
+        children:category!parent_id (
           id,
           name,
           description,

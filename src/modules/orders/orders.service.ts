@@ -69,10 +69,10 @@ export class OrdersService {
     let addressId = null;
     if (savedAddressId) {
       const { data: savedAddress } = await this.supabase
-        .from('userAddress')
+        .from('user_address')
         .select('*')
         .eq('id', savedAddressId)
-        .eq('userId', userId)
+        .eq('user_id', userId)
         .eq('is_active', true)  // Fixed: should be 'is_active'
         .single();
       
@@ -416,7 +416,7 @@ export class OrdersService {
         
         // Get paid orders for revenue calculation
         baseQuery
-          .select('totalAmount')
+          .select('total_amount')
           .match(userFilter)
           .in('status', ['PAID', 'COMPLETED']),
         
@@ -434,17 +434,17 @@ export class OrdersService {
             )
           `)
           .match(userFilter)
-          .order('createdAt', { ascending: false })
+          .order('created_at', { ascending: false })
           .limit(5)
       ]);
 
       const revenue = paidOrdersResult.data?.reduce(
-        (sum, order) => sum + Number(order.totalAmount), 
+        (sum, order) => sum + Number(order.total_amount), 
         0
       ) || 0;
 
       const totalRevenue = paidOrdersResult.data?.reduce(
-        (sum, order) => sum + Number(order.totalAmount), 
+        (sum, order) => sum + Number(order.total_amount), 
         0
       ) || 0;
 

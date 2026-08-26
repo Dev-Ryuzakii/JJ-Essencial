@@ -195,7 +195,7 @@ export class PaymentsService {
         .from('payment_transaction')
         .update({
           status: 'PAID',
-          gatewayData: verificationResult.data,
+          gateway_data: verificationResult.data,
         })
         .eq('reference', reference);
 
@@ -208,7 +208,7 @@ export class PaymentsService {
         .from('orders')
         .update({
           status: 'PAID',
-          paymentRef: reference,
+          payment_ref: reference,
         })
         .eq('id', transaction.order_id);
 
@@ -334,7 +334,7 @@ export class PaymentsService {
       .from('payment_transaction')
       .update({
         status: 'PAID',
-        gatewayData,
+        gateway_data: gatewayData,
       })
       .eq('reference', reference);
 
@@ -347,7 +347,7 @@ export class PaymentsService {
       .from('orders')
       .update({
         status: 'PAID',
-        paymentRef: reference,
+        payment_ref: reference,
       })
       .eq('id', transaction.order_id);
 
@@ -580,17 +580,17 @@ export class PaymentsService {
     const receiptUrl = `uploads/receipts/${Date.now()}_${file.originalname}`;
 
     const { data: receipt, error: receiptError } = await this.supabase
-      .from('paymentReceipt')
+      .from('payment_receipt')
       .insert([{
-        transactionId: transaction.id,
-        receiptUrl,
-        originalName: file.originalname,
-        fileSize: file.size,
-        mimeType: file.mimetype,
-        uploadedBy: userId,
-        verificationStatus: 'PENDING',
+        transaction_id: transaction.id,
+        receipt_url: receiptUrl,
+        original_name: file.originalname,
+        file_size: file.size,
+        mime_type: file.mimetype,
+        uploaded_by: userId,
+        verification_status: 'PENDING',
       }])
-      .select('*, uploader:users(id, fullName, email)')
+      .select('*, uploader:profile(id, full_name, email)')
       .single();
 
     if (!receipt || receiptError) {
@@ -633,7 +633,7 @@ export class PaymentsService {
     const { receiptId, status, notes } = verifyReceiptDto;
 
     const { data: receipt, error: receiptError } = await this.supabase
-      .from('paymentReceipt')
+      .from('payment_receipt')
       .select(`
         *,
         transaction:payment_transaction (
@@ -662,14 +662,14 @@ export class PaymentsService {
 
     // Update receipt
     const { data: updatedReceipt, error: updateError } = await this.supabase
-      .from('paymentReceipt')
+      .from('payment_receipt')
       .update({
-        verificationStatus: status,
-        verifiedBy: adminId,
-        verificationNotes: notes,
+        verification_status: status,
+        verified_by: adminId,
+        verification_notes: notes,
       })
       .eq('id', receiptId)
-      .select('*, uploader:users(id, fullName, email)')
+      .select('*, uploader:profile(id, full_name, email)')
       .single();
 
     if (!updatedReceipt || updateError) {
@@ -744,7 +744,7 @@ export class PaymentsService {
 
   async getPendingReceipts(): Promise<PaymentReceiptDto[]> {
     const { data: receipts, error } = await this.supabase
-      .from('paymentReceipt')
+      .from('payment_receipt')
       .select(`
         *,
         transaction:payment_transaction (
@@ -760,8 +760,8 @@ export class PaymentsService {
           email
         )
       `)
-      .eq('verificationStatus', 'PENDING')
-      .order('createdAt', { ascending: true });
+      .eq('verification_status', 'PENDING')
+      .order('created_at', { ascending: true });
 
     if (error) {
       throw new Error('Failed to fetch pending receipts');
@@ -794,10 +794,10 @@ export class PaymentsService {
 
     // Then get all receipts for this transaction
     const { data: receipts, error: receiptsError } = await this.supabase
-      .from('paymentReceipt')
-      .select('*, uploader:users(id, fullName, email)')
-      .eq('transactionId', transaction.id)
-      .order('createdAt', { ascending: false });
+      .from('payment_receipt')
+      .select('*, uploader:profile(id, full_name, email)')
+      .eq('transaction_id', transaction.id)
+      .order('created_at', { ascending: false });
 
     if (receiptsError) {
       throw new Error('Failed to fetch receipts');
