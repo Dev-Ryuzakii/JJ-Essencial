@@ -7,6 +7,7 @@ import * as cors from 'cors';
 import helmet from 'helmet';
 import * as compression from 'compression';
 import * as bodyParser from 'body-parser';
+import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
@@ -71,6 +72,9 @@ async function bootstrap() {
 
   // Global API prefix
   app.setGlobalPrefix(apiPrefix);
+
+  // Surface the real cause of 500s instead of a bare "Internal server error"
+  app.useGlobalFilters(new AllExceptionsFilter());
 
   // Global validation pipe
   app.useGlobalPipes(
